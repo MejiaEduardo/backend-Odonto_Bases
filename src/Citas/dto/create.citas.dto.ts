@@ -3,7 +3,8 @@ import { IsInt, IsEnum, IsString } from "class-validator";
 import { HorarioLaboral } from "../../Enums/enums";
 import { EstadoCita } from "../../Enums/enums";
 
-
+// horarioLaboral
+// EstadoCita
 export class CreateCitaDto{
     @IsString()
     fecha!: string;
@@ -14,7 +15,7 @@ export class CreateCitaDto{
 
     @ApiProperty({enum: HorarioLaboral})
     @IsEnum(HorarioLaboral)
-    hora?: HorarioLaboral;
+    hora!: HorarioLaboral;
 
     @ApiProperty({
     description: 'ID del paciente asociado a la cita',
