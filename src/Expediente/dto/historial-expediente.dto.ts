@@ -24,26 +24,16 @@ export class HistoriaDetalleDto{
     @ApiProperty({ required: false })
     diagnostico?: string;
 
-    
+    @ApiProperty({ required: false })
+    tratamiento?: string;
 
+    @ApiProperty({ required: false})
+    planTratamiento?: string;
 
+    @ApiProperty({ required: false })
+    doctorNombre?: string;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    @ApiProperty ({ type: [HistorialArchivoDTo], required: false })
+    archivos?: HistorialArchivoDTo[]
 
 }    

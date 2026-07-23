@@ -29,7 +29,7 @@ async create(@Body() dto: CreateEmpleadoDto) {
             data: result,
         };
     } catch (error) {
-      throw new BadRequestException(`${error.message}`);
+      throw new BadRequestException(`${(error as Error).message}`);
     }
 } 
 
@@ -68,7 +68,7 @@ async update(@Param('id', ParseIntPipe) id: number, @Body() UpdateEmpleadoDto: U
             data: empleado,
         };
     } catch (error) {
-        throw new BadRequestException(`${error.message}`);
+        throw new BadRequestException(`${(error as Error).message}`);
     }
     }
 
@@ -91,4 +91,3 @@ async update(@Param('id', ParseIntPipe) id: number, @Body() UpdateEmpleadoDto: U
 
 
 
-}

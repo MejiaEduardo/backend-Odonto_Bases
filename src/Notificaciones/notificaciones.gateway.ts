@@ -54,11 +54,10 @@ export class NotificationGateway
             client.join (`user-${userId}`);
 
             console.log(`Cliente conectado y autenticado: ${client.id}`)
-            console.log(`Detalle del error: ${error.message}`);
         } catch (error) {
             //si la verificacion falla (token no valido, expirado o error de decodificacion )
             console.log(`Conexion rechazada: Token no valido/expirado. ID: ${client.id}`);
-            console.log(`Detalle del error: ${error.message}`);
+            console.log(`Detalle del error: ${(error as Error).message}`);
             client.disconnect(); //desconectar si el token es invalido
         }
     }

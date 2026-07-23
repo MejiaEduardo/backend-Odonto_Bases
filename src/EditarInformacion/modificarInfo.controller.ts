@@ -11,7 +11,7 @@ import { UseGuards } from '@nestjs/common/decorators/core/use-guards.decorator';
 @ApiTags('Modificar')
 @Controller('Modificar')
 @UseGuards(JwtAuthGuard, RolesGuard)
-export class ModificadorInfoCOntoller {
+export class ModificadorInfoController {
     constructor(private readonly modificadorInfoService: ModificarInfoService) {}
 
     // get para obtener un usuarion por corro deni o telefono
