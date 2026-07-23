@@ -24,16 +24,26 @@
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
     "@nestjs/jwt": "^11.0.2",
+<<<<<<< HEAD
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/swagger": "^11.4.5",
+=======
+    "@nestjs/mapped-types": "^2.1.1",
+    "@nestjs/platform-express": "^11.0.1",
+"@nestjs/platform-socket.io": "^11.1.28",
+    "@nestjs/swagger": "^11.4.6",
+    "@nestjs/websockets": "^11.1.28",
+>>>>>>> 926cdffa9cecce9a05864f4d55d9fab66e02b4e8
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "dotenv": "^17.4.2",
     "pg": "^8.22.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.8.3",
+    "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -42,7 +52,11 @@
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
     "@types/bcrypt": "^6.0.0",
+<<<<<<< HEAD
     "@types/express": "^5.0.6",
+=======
+    "@types/express": "^5.0.0",
+>>>>>>> 926cdffa9cecce9a05864f4d55d9fab66e02b4e8
     "@types/jest": "^30.0.0",
     "@types/node": "^24.13.3",
     "@types/passport": "^1.0.17",
