@@ -5,6 +5,7 @@ import { CitasModule } from './Citas/citas.module';
 import { NotificacionesModule } from './Notificaciones/notificaciones.module';
 import { EmpleadoModule } from './Empleado/empleado.module';
 import { ModificarInfoModule } from './EditarInformacion/modificarInfo.Module';
+import { FirebaseModule } from './FireBase/firebase.Module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { ModificarInfoModule } from './EditarInformacion/modificarInfo.Module';
     NotificacionesModule,
     EmpleadoModule,
     ModificarInfoModule,
+    FirebaseModule
   ],
 })
 export class AppModule {}
