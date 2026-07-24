@@ -24,11 +24,13 @@ export class ModificarInfoService {
   private async findUserByCriterion(criterion: SearchCriterion) {
     // Si el criterio es el correo, busca directamente en el modelo User.
     if (criterion.correo) {
-      return this.db.pool.query(
+      const result = await this.db.pool.query(
         'SELECT * FROM "User" u JOIN "Persona" p ON u."personaId" = p.id WHERE u."correo" = $1',
         [criterion.correo]
       );
+      return result.rows[0];
     }
+
 
   const query = `
       SELECT u.*, p.* 
@@ -166,6 +168,6 @@ if (password) {
 }
 
 
-
+return { message: 'Datos del cliente completados correctamente.' };
 }
 }

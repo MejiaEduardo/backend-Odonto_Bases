@@ -4,7 +4,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class CreateExpedienteDetalleDto {
     @ApiProperty({ description: 'ID del expediente al que pertenece este detalle.'})
     @IsInt()
-    expendienteId: number;
+    expedienteId: number;
 
     @ApiProperty({
         description: 'fecha de la consulta o evento del detalle del expediente (formato ISO 8601).',

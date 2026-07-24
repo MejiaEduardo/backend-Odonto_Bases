@@ -8,8 +8,7 @@ export class CreateExpedienteDto {
 
     @ApiProperty({ description: 'ID del doctor'})
     @IsInt()
-    @IsOptional()
-    doctor?: number;
+    doctorId?: number;
 
     @ApiProperty ({ description: 'Alergias del paciente', required: false })
     @IsOptional()
