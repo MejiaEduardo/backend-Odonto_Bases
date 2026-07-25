@@ -6,30 +6,7 @@ import { CreateCitaDto } from './dto/create.citas.dto';
 import { UpdateCitaDto } from './dto/update.citas.dto';
 import { HistorialCancelaDto } from './dto/historial-cancelaciones.dto';
 import { NotificationService } from '../Notificaciones/notificaciones.service';
-/**
- * Conversión de Prisma a SQL puro (pg) usando el schema real de base.sql.
- * Tablas y columnas relevantes (todas con comillas dobles obligatorias
- * porque Prisma las creó en PascalCase/camelCase):
- *
- *   "Persona"(id, nombre, apellido, dni, telefono, direccion, "fechaNac", "createdAt", "updatedAt")
- *   "Empleado"(id, "personaId", puesto, salario, "fechaIngreso", activo)
- *   "Especialidad"(id, nombre, descripcion, "createdAt", "updatedAt")
- *   "EspecialidadDoctor"("doctorId", "especialidadId", "fechaAsociacion")
- *   "ServicioClinico"(id, nombre, descripcion, precio, activo, "createdAt", "updatedAt")
- *   "ServicioEspecialidad"("servicioId", "especialidadId")
- *   "Expediente"(id, "pacienteId" [unique], alergias, enfermedades, medicamentos, observaciones, activo, "createdAt", "updatedAt")
- *   "ExpedienteDoctor"("expedienteId", "doctorId", "fechaAsociacion")  -- PK compuesta
- *   "Cita"(id, fecha [TEXT], estado, "pacienteId", "doctorId", "servicioId", "createdAt", "updatedAt", hora [TEXT], "recordatorio1h", "recordatorio24h")
- *   "HistorialCancelacionCita"(id, "citaId" [unique], "motivoCancelacion", "usuarioCancelaId", "rolCancela", "fechaCancelacion")
- *
- * IMPORTANTE: "fecha" y "hora" en "Cita" son TEXT, no TIMESTAMP/TIME.
- * Los filtros por rango de fecha se hacen por comparación de texto
- * (funciona bien si el formato es siempre 'YYYY-MM-DD', porque ese
- * formato ordena igual lexicográfica y cronológicamente).
- *
- * "updatedAt" no tiene default en ninguna tabla -> se asigna a mano
- * con CURRENT_TIMESTAMP en cada INSERT/UPDATE.
- */
+
 
 function normalizarHora(hora: string): string {
   if (!hora) return '';
