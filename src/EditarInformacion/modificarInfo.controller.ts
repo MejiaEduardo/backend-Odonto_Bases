@@ -2,9 +2,9 @@ import { Controller, Get, Patch, Body, BadRequestException,Param,Query} from "@n
 import { ModificarInfoService } from "./modificarInfo.service";
 import { ApiResponse, ApiTags } from "@nestjs/swagger";
 import { UpdateModificarInfoDto } from "./dtoModificar/update.modificarInfo";
-import { JwtAuthGuard } from '../auth/guards/jwt.guard';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
+import { JwtAuthGuard } from '../Auth/guards/jwt.guard';
+import { RolesGuard } from '../Auth/roles.guard';
+import { Roles } from '../Auth/roles.decorator';
 import { UseGuards } from '@nestjs/common/decorators/core/use-guards.decorator';
 
 
@@ -68,7 +68,7 @@ export class ModificadorInfoController {
         try{
             return await this.modificadorInfoService.completarDatosPorCorreo(correo, data);
         } catch (error) {
-            throw new BadRequestException (error.message);
+            throw new BadRequestException ((error as Error).message);
 
         }
     }

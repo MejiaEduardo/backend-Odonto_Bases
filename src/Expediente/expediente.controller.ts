@@ -7,13 +7,14 @@ import { ApiOperation , ApiTags, ApiResponse,ApiParam } from '@nestjs/swagger';
 import { ParseIntPipe } from '@nestjs/common';
 import { HistoriaDetalleDto } from './dto/historial-expediente.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { StorageService } from '../firebase/storage.service';
-import { ExpedienteArchivoService } from '../firebase/expediente-archivo.service';
-import { JwtAuthGuard } from '../auth/guards/jwt.guard';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
+import { StorageService } from '../FireBase/storage.service';
+import { ExpedienteArchivoService } from '../FireBase/expediente-archivo.service';
+import { JwtAuthGuard } from '../Auth/guards/jwt.guard';
+import { RolesGuard } from '../Auth/roles.guard';
+import { Roles } from '../Auth/roles.decorator';
 import { get } from 'http';
 import { UpdateEmpleadoDto } from '../Empleado/dtoempleado/update-empleado.dto';
+
 
 
 @ApiTags('expediente')
@@ -96,7 +97,7 @@ export class ExpedienteController {
     @ApiResponse ({ status: 400, description: 'Error en la subida del archivo. '})
     @UseInterceptors(FileInterceptor('file'))
     async upload(
-        @UploadedFile() file: Express.Multer.File,
+        @UploadedFile() file: any,
         @Body ('expedienteId', ParseIntPipe) expedienteId: number,
         @Body ('creadoPorId', ParseIntPipe) creadoPorId: number,
     ){

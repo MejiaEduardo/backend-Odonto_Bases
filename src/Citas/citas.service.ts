@@ -4,6 +4,8 @@ import { DatabaseService } from '../database/datebaseService.service';
 import { HorarioLaboral } from '../Enums/enums';
 import { CreateCitaDto } from './dto/create.citas.dto';
 import { UpdateCitaDto } from './dto/update.citas.dto';
+import { HistorialCancelaDto } from './dto/historial-cancelaciones.dto';
+import { NotificationService } from '../Notificaciones/notificaciones.service';
 /**
  * Conversión de Prisma a SQL puro (pg) usando el schema real de base.sql.
  * Tablas y columnas relevantes (todas con comillas dobles obligatorias

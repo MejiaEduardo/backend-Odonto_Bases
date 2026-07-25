@@ -1,11 +1,9 @@
 import { Module } from '@nestjs/common';
-import { DatabaseModule } from '../database/database.module';
 import { ModificadorInfoController } from "./modificarInfo.controller";
+import { ModificarInfoService } from "./modificarInfo.service";
 
 @Module({
     controllers: [ModificadorInfoController],
-    providers: [ModificadorInfoController],
-    imports:[DatabaseModule]
-
+    providers: [ModificarInfoService],
 })
 export class ModificarInfoModule {}

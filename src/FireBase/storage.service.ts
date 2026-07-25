@@ -3,7 +3,7 @@ import { FirebaseService } from './firebase.service';
 import { ExpedienteArchivoService } from './expediente-archivo.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as path from 'path';
- 
+
 /**
  * Este service NO hace consultas SQL directas: todo el acceso a la base
  * de datos pasa por ExpedienteArchivoService (ya convertido a SQL puro
@@ -30,7 +30,7 @@ export class StorageService {
     // 1. MÉTODO DE SUBIDA (POST)
     // =======================================================================================
     async uploadFile(
-        file: Express.Multer.File, 
+        file: any, 
         expedienteId: number, 
         creadoPorId: number
     ): Promise<UploadResult> {

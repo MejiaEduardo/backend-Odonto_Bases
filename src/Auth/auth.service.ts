@@ -33,16 +33,15 @@ const BLOCK_TIME_MS = 30_000;
  * `if (result.code === 0)`, sabe que result es AuthSuccess y que `token`
  * existe, sin necesidad de castear el tipo manualmente en el controller.
  */
-interface AuthSuccess {
+export interface AuthSuccess {
   message: string;
   code: 0;
   token: string;
   user: any;
 }
-
-interface AuthError {
+export interface AuthError {
   message: string;
-  code: 11 | 13 | 25 | 99 | 500; // códigos de error reales que devuelve validateUser
+  code: 11 | 13 | 25 | 99 | 500;
   retryAfter?: number;
 }
 
@@ -344,4 +343,5 @@ export class AuthService {
       return { message: 'Error interno del servidor', code: 500 };
     }
   }
+  
 }

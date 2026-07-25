@@ -6,6 +6,10 @@ import { NotificacionesModule } from './Notificaciones/notificaciones.module';
 import { EmpleadoModule } from './Empleado/empleado.module';
 import { ModificarInfoModule } from './EditarInformacion/modificarInfo.Module';
 import { FirebaseModule } from './FireBase/firebase.Module';
+import { LogsModule } from './logs/logs.module';
+import { ExpedienteModule } from './Expediente/expediente.module';
+import { RecordatorioModule } from './Recordatorio/recordatorio.module';
+import { AuthModule } from './Auth/auth.module';
 
 @Module({
   imports: [
@@ -15,7 +19,10 @@ import { FirebaseModule } from './FireBase/firebase.Module';
     NotificacionesModule,
     EmpleadoModule,
     ModificarInfoModule,
-    FirebaseModule
+    FirebaseModule,
+    LogsModule,
+    ExpedienteModule,
+    RecordatorioModule,
   ],
 })
 export class AppModule {}
