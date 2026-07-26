@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsDate, IsEmail, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsDate, IsEmail, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateEmpleadoDto {
@@ -77,5 +77,22 @@ export class CreateEmpleadoDto {
   @IsOptional()
   @IsBoolean()
   usuarioActivo?: boolean;
+
+  /**
+   * Especialidades del empleado. Solo aplica cuando el puesto es DOCTOR.
+   *
+   * El frontend ya enviaba este campo, pero el DTO no lo declaraba y el
+   * ValidationPipe (forbidNonWhitelisted: true) rechazaba la petición con
+   * "property especialidadIds should not exist".
+   */
+  @ApiPropertyOptional({
+    description: 'IDs de las especialidades del doctor',
+    type: [Number],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true, message: 'Cada especialidad debe ser un ID numérico' })
+  @Type(() => Number)
+  especialidadIds?: number[];
 }
 

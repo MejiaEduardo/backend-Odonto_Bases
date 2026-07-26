@@ -3,6 +3,12 @@ import {ServiciosService} from './Servicios.service'
 import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { CreateServiciosDto } from "./dto/create_servicios.dto";
 import { UpdateServiciosDto } from "./dto/update_Servicios.dto";
+import { UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../Auth/guards/jwt.guard';
+import { RolesGuard } from '../Auth/roles.guard';
+import { Roles } from '../Auth/roles.decorator';
+import { Public } from '../Auth/public.decorator';
+
 
 
 
@@ -18,6 +24,11 @@ const CODE_TO_HTTP_STATUS: Record<number, HttpStatus>={
 };
 
 @ApiTags('Servicios')
+/*
+ * El catalogo se lee sin iniciar sesion: la landing y /services son
+ * publicas. Solo se protegen las escrituras, que son de ADMIN.
+ */
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('Servicios')
 export class ServiciosController{
     constructor(private readonly serviciosService: ServiciosService) {}
@@ -34,6 +45,7 @@ export class ServiciosController{
 
 
     @Get()
+    @Public()
     @ApiOperation({summary: 'Listar todos los Servicios Clinicos'})
     @ApiResponse({status:200, description:'Lista de servivios Obtenidos correctamente'})
     async findAll(){
@@ -42,6 +54,7 @@ export class ServiciosController{
 
 
     @Get(':id')
+    @Public()
     @ApiOperation({summary: 'obtener un servicio clinico por id'})
     @ApiResponse({status:200, description:'Servicio encontrado'})
     @ApiResponse({status:404, description:'Servicio no encontrado'})
@@ -52,6 +65,7 @@ export class ServiciosController{
     
 
     @Post()
+    @Roles('ADMIN')
     @ApiOperation({summary: 'Crear un nuevo servicio clinico'})
     @ApiResponse({status:200, description: 'Servicio creado correctamente'})
     @ApiResponse({status: 400, description:'Datos invalidos'})
@@ -63,6 +77,7 @@ export class ServiciosController{
 
 
     @Patch(':id')
+    @Roles('ADMIN')
     @ApiOperation({ summary: 'Actualizar un servicio clinico existente'})
     @ApiResponse({status:200, description: 'Servicios Actualizado correctamente'})
     @ApiResponse({status:404, description: 'Servicio no encontrado'})
@@ -76,6 +91,7 @@ export class ServiciosController{
     }
 
     @Delete(':id')
+    @Roles('ADMIN')
     @ApiOperation({ summary: 'Eliminar un servicio clínico' })
     @ApiResponse({ status: 200, description: 'Servicio eliminado correctamente' })
     @ApiResponse({ status: 404, description: 'Servicio no encontrado' })

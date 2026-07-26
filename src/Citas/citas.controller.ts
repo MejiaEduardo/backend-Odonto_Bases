@@ -4,10 +4,15 @@ import { CitasService } from './citas.service';
 import { CreateCitaDto } from './dto/create.citas.dto';
 import { UpdateCitaDto } from './dto/update.citas.dto';
 import { HistorialCancelaDto } from './dto/historial-cancelaciones.dto';
+import { UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../Auth/guards/jwt.guard';
+import { RolesGuard } from '../Auth/roles.guard';
+import { Roles } from '../Auth/roles.decorator';
 
 
 const CODE_TO_HTTP_STATUS: Record<number, HttpStatus>={
     4: HttpStatus.NOT_FOUND, // CITA NO ENCONTRADA
+    5: HttpStatus.CONFLICT, // TRANSICION DE ESTADO NO PERMITIDA (p. ej. aprobar algo que no esta SOLICITADA)
     21: HttpStatus.NOT_FOUND, // DOCTOR NO ENCONTRADO
     22: HttpStatus.NOT_FOUND, // PACIENTE NO ENCONTRADO
     23: HttpStatus.BAD_REQUEST, // FROMATO DE FECHA INVALIDO
@@ -18,7 +23,18 @@ const CODE_TO_HTTP_STATUS: Record<number, HttpStatus>={
     500: HttpStatus.INTERNAL_SERVER_ERROR
 };
 
+/*
+ * Toda la agenda exige sesion iniciada. Los roles se ponen por endpoint
+ * porque cada transicion la ejecuta alguien distinto:
+ *   solicitar  -> CLIENTE      aprobar   -> RECEPCIONISTA
+ *   confirmar  -> CLIENTE      completar -> DOCTOR
+ *
+ * OJO: esto valida QUE ROL eres, no DE QUIEN es la cita. Un CLIENTE
+ * autenticado todavia puede pedir /citas/paciente/<otro id>. Falta el
+ * chequeo de pertenencia (ver GUIA_BACKEND.md).
+ */
 @ApiTags('Citas')
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('citas')
 export class CitasController{
     constructor (private readonly citasService: CitasService){}
@@ -38,6 +54,7 @@ export class CitasController{
     }
     
     @Post()
+    @Roles('CLIENTE', 'RECEPCIONISTA', 'ADMIN')
     @ApiOperation({summary: 'Agendar una nueva cita'})
     @ApiResponse({status: 201, description:'Cita creada correctamente'})
     @ApiResponse({status: 404, description: 'Doctor o paciente no encontrado'})
@@ -49,10 +66,21 @@ export class CitasController{
 
 
     @Get()
+  @Roles('RECEPCIONISTA', 'ADMIN')
   @ApiOperation({ summary: 'Listar todas las citas, opcionalmente filtradas por fecha' })
   @ApiQuery({ name: 'fecha', required: false, description: 'Formato YYYY-MM-DD' })
-  async findAll(@Query('fecha') fecha?: string) {
-    return this.citasService.findAll({ fecha });
+  @ApiQuery({ name: 'estado', required: false, description: 'SOLICITADA, PENDIENTE, CONFIRMADA...' })
+  @ApiQuery({ name: 'desdeHoy', required: false, description: 'true = ocultar citas pasadas' })
+  async findAll(
+    @Query('fecha') fecha?: string,
+    @Query('estado') estado?: string,
+    @Query('desdeHoy') desdeHoy?: string,
+  ) {
+    return this.citasService.findAll({
+      fecha,
+      estado,
+      desdeHoy: desdeHoy === 'true',
+    });
   }
  
   @Get('doctores-disponibles')
@@ -97,6 +125,7 @@ export class CitasController{
   }
  
   @Get('doctor/:doctorId')
+  @Roles('DOCTOR', 'RECEPCIONISTA', 'ADMIN')
   @ApiOperation({ summary: 'Citas asignadas a un doctor' })
   async getCitasForDoctor(@Param('doctorId', ParseIntPipe) doctorId: number) {
     return this.citasService.getCitasForDoctor(doctorId);
@@ -111,6 +140,7 @@ export class CitasController{
   }
  
   @Patch(':id')
+  @Roles('CLIENTE', 'RECEPCIONISTA', 'ADMIN')
   @ApiOperation({ summary: 'Actualizar fecha/hora de una cita' })
   @ApiResponse({ status: 404, description: 'Cita no encontrada' })
   @ApiResponse({ status: 409, description: 'El doctor ya tiene una cita en ese horario' })
@@ -134,7 +164,49 @@ export class CitasController{
     return this.throwIfError(result);
   }
  
+  @Patch(':id/aprobar')
+  @Roles('RECEPCIONISTA', 'ADMIN')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Recepcion aprueba una solicitud de cita (SOLICITADA -> PENDIENTE)',
+  })
+  @ApiResponse({ status: 404, description: 'Cita no encontrada' })
+  @ApiResponse({ status: 409, description: 'La cita no esta en estado SOLICITADA' })
+  async aprobar(@Param('id', ParseIntPipe) id: number) {
+    const result = await this.citasService.aprobar(id);
+    return this.throwIfError(result);
+  }
+
+  @Patch(':id/completar')
+  @Roles('DOCTOR', 'ADMIN')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'El doctor marca la cita como atendida (-> COMPLETADA)',
+    description: 'Requisito para poder facturarla desde recepcion.',
+  })
+  @ApiResponse({ status: 404, description: 'Cita no encontrada' })
+  @ApiResponse({ status: 409, description: 'La cita no esta en un estado completable' })
+  async completar(@Param('id', ParseIntPipe) id: number) {
+    const result = await this.citasService.completar(id);
+    return this.throwIfError(result);
+  }
+
+  @Patch(':id/enterado')
+  @Roles('CLIENTE')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'El paciente da por leido el aviso de cancelacion',
+    description:
+      'No modifica la cita. Solo marca "vistoPorPaciente" para que el aviso deje de mostrarse.',
+  })
+  @ApiResponse({ status: 404, description: 'No hay avisos pendientes para esa cita' })
+  async enterado(@Param('id', ParseIntPipe) id: number) {
+    const result = await this.citasService.marcarCancelacionVista(id);
+    return this.throwIfError(result);
+  }
+
   @Patch(':id/confirmar')
+  @Roles('CLIENTE', 'RECEPCIONISTA', 'ADMIN')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Confirmar una cita' })
   @ApiResponse({ status: 404, description: 'Cita no encontrada' })

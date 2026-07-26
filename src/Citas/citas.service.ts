@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../database/datebaseService.service';
-import { HorarioLaboral } from '../Enums/enums';
+import { HorarioLaboral, EstadoCita } from '../Enums/enums';
 import { CreateCitaDto } from './dto/create.citas.dto';
 import { UpdateCitaDto } from './dto/update.citas.dto';
 import { HistorialCancelaDto } from './dto/historial-cancelaciones.dto';
@@ -31,6 +31,17 @@ export class CitasService {
 
   async create(createCitaDto: CreateCitaDto) {
     const { fecha, hora, pacienteId, doctorId, servicioId } = createCitaDto;
+
+    /*
+     * El estado inicial depende de QUIEN crea la cita:
+     *   - El cliente desde su portal manda SOLICITADA (queda por aprobar).
+     *   - Recepcion la crea ya aprobada, en PENDIENTE.
+     * Antes se ignoraba `estado` del DTO y siempre se insertaba 'PENDIENTE'.
+     */
+    const estadoInicial =
+      createCitaDto.estado === EstadoCita.SOLICITADA
+        ? EstadoCita.SOLICITADA
+        : EstadoCita.PENDIENTE;
     const horaNormalizada = normalizarHora(hora);
 
     const doctorExists = await this.db.pool.query(
@@ -97,10 +108,10 @@ export class CitasService {
         `
         INSERT INTO "Cita"
           (fecha, hora, "pacienteId", "doctorId", "servicioId", estado, "updatedAt")
-        VALUES ($1, $2, $3, $4, $5, 'PENDIENTE', CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, $4, $5, $6::"EstadoCita", CURRENT_TIMESTAMP)
         RETURNING id, fecha, hora, "pacienteId", "doctorId", "servicioId", estado
         `,
-        [fecha, horaNormalizada, pacienteId, doctorId, servicioId],
+        [fecha, horaNormalizada, pacienteId, doctorId, servicioId, estadoInicial],
       );
       const nuevaCita = inserted.rows[0];
 
@@ -140,34 +151,105 @@ export class CitasService {
   }
 
   // OBTENER TODAS LAS CITAS
-  async findAll(filtros: { fecha?: string }) {
+  /**
+   * Lista de citas para el panel de recepcion.
+   *
+   * @param filtros.fecha    dia exacto (YYYY-MM-DD)
+   * @param filtros.estado   filtra por estado, p. ej. SOLICITADA
+   * @param filtros.desdeHoy si es true, oculta las citas ya pasadas
+   *
+   * Devuelve el nombre del doctor y el correo/telefono del paciente, que es
+   * lo que recepcion necesita para contactarlo sin buscarlo aparte.
+   */
+  async findAll(filtros: { fecha?: string; estado?: string; desdeHoy?: boolean }) {
     const params: any[] = [];
-    let whereClause = '';
+    const condiciones: string[] = [];
 
     if (filtros.fecha) {
-      // "fecha" es TEXT; se asume formato 'YYYY-MM-DD' (comparación exacta del día)
       params.push(filtros.fecha);
-      whereClause = `WHERE c.fecha = $1`;
+      condiciones.push(`c.fecha = $${params.length}`);
     }
+    if (filtros.estado) {
+      params.push(filtros.estado);
+      condiciones.push(`c.estado = $${params.length}::"EstadoCita"`);
+    }
+    if (filtros.desdeHoy) {
+      // "fecha" es TEXT en formato YYYY-MM-DD, asi que el cast es seguro
+      condiciones.push(`c.fecha::date >= CURRENT_DATE`);
+    }
+
+    const whereClause = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
 
     const { rows } = await this.db.pool.query(
       `
       SELECT
         c.*,
-        json_build_object('id', d.id, 'personaId', d."personaId") AS doctor,
+        json_build_object(
+          'id', d.id,
+          'personaId', d."personaId",
+          'persona', json_build_object('nombre', dp.nombre, 'apellido', dp.apellido)
+        ) AS doctor,
         json_build_object('id', s.id, 'nombre', s.nombre, 'precio', s.precio) AS servicio,
-        json_build_object('id', pac.id, 'nombre', pac.nombre, 'apellido', pac.apellido) AS paciente
+        json_build_object(
+          'id', pac.id,
+          'nombre', pac.nombre,
+          'apellido', pac.apellido,
+          'dni', pac.dni,
+          'telefono', pac.telefono,
+          'correo', u.correo
+        ) AS paciente
       FROM "Cita" c
       JOIN "Empleado" d ON d.id = c."doctorId"
+      JOIN "Persona" dp ON dp.id = d."personaId"
       JOIN "ServicioClinico" s ON s.id = c."servicioId"
       JOIN "Persona" pac ON pac.id = c."pacienteId"
+      LEFT JOIN "User" u ON u."personaId" = pac.id
       ${whereClause}
-      ORDER BY c.hora ASC
+      ORDER BY c.fecha ASC, c.hora ASC
       `,
       params,
     );
 
     return rows;
+  }
+
+  /**
+   * Recepcion aprueba una solicitud: SOLICITADA -> PENDIENTE.
+   * A partir de aqui el cliente puede confirmar su asistencia.
+   */
+  async aprobar(id: number) {
+    try {
+      const { rows } = await this.db.pool.query(
+        `
+        UPDATE "Cita"
+        SET estado = 'PENDIENTE', "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id = $1 AND estado = 'SOLICITADA'
+        RETURNING id, "doctorId", estado
+        `,
+        [id],
+      );
+
+      if (rows.length === 0) {
+        // O no existe, o ya no estaba en SOLICITADA
+        const existe = await this.db.pool.query(
+          `SELECT estado FROM "Cita" WHERE id = $1`,
+          [id],
+        );
+        if (existe.rows.length === 0) {
+          return { code: 4, message: 'Cita no encontrada' };
+        }
+        return {
+          code: 5,
+          message: `Solo se pueden aprobar solicitudes. Esta cita esta en ${existe.rows[0].estado}.`,
+        };
+      }
+
+      this.notificationService.notifyAll('updateCitasDoctor', rows[0].doctorId);
+      return { code: 0, message: 'Solicitud aprobada', data: rows[0] };
+    } catch (error) {
+      console.error(error);
+      return { code: 500, message: 'No se pudo aprobar la solicitud' };
+    }
   }
 
   async getDoctoresDisponibles(fecha: string, servicioId: number) {
@@ -267,6 +349,17 @@ export class CitasService {
       return { message: 'Paciente no encontrado', code: 22 };
     }
 
+    /*
+     * Antes esta consulta descartaba las CANCELADA, asi que cuando
+     * recepcion cancelaba o rechazaba una cita esta desaparecia de la
+     * pantalla del paciente sin ninguna explicacion.
+     *
+     * Ahora se devuelven tambien las canceladas POR OTRA PERSONA que el
+     * paciente todavia no ha leido, junto con el motivo. En cuanto pulsa
+     * "Entendido" se marca `vistoPorPaciente` y deja de aparecer.
+     *
+     * Las que cancelo el propio paciente no se incluyen: ya sabe por que.
+     */
     const { rows } = await this.db.pool.query(
       `
       SELECT
@@ -275,19 +368,62 @@ export class CitasService {
           'id', d.id,
           'persona', json_build_object('id', p.id, 'nombre', p.nombre, 'apellido', p.apellido)
         ) AS doctor,
-        json_build_object('id', s.id, 'nombre', s.nombre, 'precio', s.precio) AS servicio
+        json_build_object('id', s.id, 'nombre', s.nombre, 'precio', s.precio) AS servicio,
+        CASE
+          WHEN h.id IS NULL THEN NULL
+          ELSE json_build_object(
+            'id', h.id,
+            'motivo', h."motivoCancelacion",
+            'rolCancela', h."rolCancela",
+            'fecha', h."fechaCancelacion"
+          )
+        END AS cancelacion
       FROM "Cita" c
       JOIN "Empleado" d ON d.id = c."doctorId"
       JOIN "Persona" p ON p.id = d."personaId"
       JOIN "ServicioClinico" s ON s.id = c."servicioId"
+      LEFT JOIN LATERAL (
+        SELECT hc.id, hc."motivoCancelacion", hc."rolCancela", hc."fechaCancelacion"
+        FROM "HistorialCancelacionCita" hc
+        WHERE hc."citaId" = c.id
+          AND hc."vistoPorPaciente" = false
+          AND UPPER(hc."rolCancela") NOT IN ('CLIENTE', 'PACIENTE')
+        ORDER BY hc."fechaCancelacion" DESC
+        LIMIT 1
+      ) h ON true
       WHERE c."pacienteId" = $1
-        AND c.estado NOT IN ('CANCELADA', 'COMPLETADA')
+        AND (
+          c.estado NOT IN ('CANCELADA', 'COMPLETADA')
+          OR (c.estado = 'CANCELADA' AND h.id IS NOT NULL)
+        )
       ORDER BY c.fecha ASC, c.hora ASC
       `,
       [pacienteId],
     );
 
     return rows;
+  }
+
+  /**
+   * El paciente pulsa "Entendido" en el aviso de cancelacion.
+   *
+   * No cambia la cita: solo deja constancia de que ya leyo el motivo,
+   * para que el aviso no le vuelva a salir cada vez que entra.
+   */
+  async marcarCancelacionVista(citaId: number) {
+    const { rowCount } = await this.db.pool.query(
+      `
+      UPDATE "HistorialCancelacionCita"
+      SET "vistoPorPaciente" = true
+      WHERE "citaId" = $1 AND "vistoPorPaciente" = false
+      `,
+      [citaId],
+    );
+
+    if (!rowCount) {
+      return { code: 4, message: 'No hay avisos pendientes para esa cita' };
+    }
+    return { code: 0, message: 'Aviso marcado como leido' };
   }
 
   async findOne(id: number) {
@@ -379,15 +515,36 @@ export class CitasService {
       return { message: 'El doctor ya tiene una cita en ese horario', code: 24 };
     }
 
-    // Nota: igual que el original, solo se actualizan fecha y hora
+    /*
+     * Estado tras reagendar:
+     *
+     *   - Si viene `estado` en el DTO se respeta. El portal del paciente
+     *     manda SOLICITADA al reprogramar, porque un cambio de fecha u hora
+     *     invalida la aprobacion anterior: recepcion debe revisar el nuevo
+     *     horario. Asi la cita vuelve a la bandeja de solicitudes.
+     *   - Si no viene (recepcion reagendando), se conserva el estado actual.
+     *
+     * Antes esta consulta ignoraba `horaNormalizada` y mandaba la hora cruda,
+     * y ponia NULL en fecha si el DTO no la traia.
+     */
+    const estadoFinal = updateCitaDto.estado ?? cita.estado;
+
     const { rows } = await this.db.pool.query(
       `
       UPDATE "Cita"
-      SET fecha = $1, hora = $2, "updatedAt" = CURRENT_TIMESTAMP
-      WHERE id = $3
+      SET fecha = $1,
+          hora = $2,
+          estado = $3::"EstadoCita",
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE id = $4
       RETURNING *
       `,
-      [updateCitaDto.fecha, updateCitaDto.hora, id],
+      [
+        updateCitaDto.fecha ?? cita.fecha,
+        horaNormalizada ?? cita.hora,
+        estadoFinal,
+        id,
+      ],
     );
     const citaActualizada = rows[0];
 
@@ -448,6 +605,47 @@ export class CitasService {
       };
     } finally {
       client.release();
+    }
+  }
+
+  /**
+   * El doctor marca que la cita ya se atendio: CONFIRMADA/PENDIENTE -> COMPLETADA.
+   *
+   * Este era el eslabon que faltaba en la cadena de facturacion. Sin el, una
+   * cita nunca llegaba a COMPLETADA y "Generar Factura" quedaba siempre vacio,
+   * porque solo se pueden facturar citas completadas.
+   */
+  async completar(id: number) {
+    try {
+      const { rows } = await this.db.pool.query(
+        `
+        UPDATE "Cita"
+        SET estado = 'COMPLETADA', "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id = $1 AND estado IN ('PENDIENTE', 'CONFIRMADA')
+        RETURNING id, "doctorId", estado
+        `,
+        [id],
+      );
+
+      if (rows.length === 0) {
+        const existe = await this.db.pool.query(
+          `SELECT estado FROM "Cita" WHERE id = $1`,
+          [id],
+        );
+        if (existe.rows.length === 0) {
+          return { code: 4, message: 'Cita no encontrada' };
+        }
+        return {
+          code: 5,
+          message: `No se puede completar una cita en estado ${existe.rows[0].estado}.`,
+        };
+      }
+
+      this.notificationService.notifyAll('updateCitasDoctor', rows[0].doctorId);
+      return { code: 0, message: 'Cita marcada como atendida', data: rows[0] };
+    } catch (error) {
+      console.error(error);
+      return { code: 500, message: 'No se pudo completar la cita' };
     }
   }
 

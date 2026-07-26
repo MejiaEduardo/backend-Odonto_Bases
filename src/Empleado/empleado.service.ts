@@ -27,8 +27,8 @@ export class EmpleadoService {
 
       // 3. Crear la persona
       const personaQuery = `
-        INSERT INTO "Persona" (nombre, apellido, dni, telefono, direccion, "fechaNac")
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO "Persona" (nombre, apellido, dni, telefono, direccion, "fechaNac", "updatedAt")
+        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
         RETURNING *;
       `;
       const personaValues = [dto.nombre, dto.apellido, dto.dni, dto.telefono, dto.direccion, dto.fechaNac];
@@ -48,16 +48,43 @@ export class EmpleadoService {
       // 5. Crear el usuario vinculado
       const hashedPassword = await bcrypt.hash(dto.password, 10);
       const usuarioQuery = `
-        INSERT INTO "User" (correo, password, rol, activo, "personaId")
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO "User" (correo, password, rol, activo, "personaId", "updatedAt")
+        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
         RETURNING *;
       `;
       const usuarioValues = [dto.correo, hashedPassword, dto.rol, dto.usuarioActivo ?? true, newpersona.id];
       const usuarioResult = await client.query(usuarioQuery, usuarioValues);
       const usuario = usuarioResult.rows[0];
 
+      // 6. Asociar especialidades (solo tiene sentido para doctores)
+      const especialidadIds = Array.from(
+        new Set((dto.especialidadIds ?? []).map(Number)),
+      ).filter((id) => Number.isInteger(id) && id > 0);
+
+      if (especialidadIds.length > 0) {
+        // Verificamos que todas existan antes de insertar
+        const encontradas = await client.query(
+          `SELECT id FROM "Especialidad" WHERE id = ANY($1::int[])`,
+          [especialidadIds],
+        );
+        if (encontradas.rows.length !== especialidadIds.length) {
+          await client.query('ROLLBACK');
+          throw new BadRequestException('Alguna especialidad no existe');
+        }
+
+        const values = especialidadIds
+          .map((_, i) => `($1, $${i + 2})`)
+          .join(', ');
+        await client.query(
+          `INSERT INTO "EspecialidadDoctor" ("doctorId", "especialidadId")
+           VALUES ${values}
+           ON CONFLICT DO NOTHING`,
+          [empleado.id, ...especialidadIds],
+        );
+      }
+
       await client.query('COMMIT');
-      return { empleado, usuario, newpersona };
+      return { empleado, usuario, newpersona, especialidadIds };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -66,11 +93,66 @@ export class EmpleadoService {
     }
   }
 
+  /**
+   * Lista de empleados con su persona, usuario y especialidades.
+   *
+   * OJO: antes esta consulta era `SELECT e.*, p.*`, lo cual tenía dos fallos:
+   *
+   *   1. "Empleado" y "Persona" tienen AMBAS una columna `id`. Con `e.*, p.*`
+   *      la segunda pisaba a la primera, así que el `id` que llegaba al
+   *      frontend era el de la PERSONA, no el del EMPLEADO. Editar usaba el
+   *      id equivocado.
+   *
+   *   2. Devolvía los campos planos, pero el frontend los lee anidados
+   *      (`empleado.persona.nombre`, `empleado.persona.user.correo`), y
+   *      el correo ni siquiera se consultaba porque faltaba el JOIN a "User".
+   *      Eso dejaba la pantalla de edición EN BLANCO.
+   *
+   * Ahora se seleccionan las columnas explícitamente y se arman los objetos
+   * anidados con json_build_object.
+   */
   async findAll() {
     const query = `
-      SELECT e.*, p.* 
-      FROM "Empleado" e 
-      JOIN "Persona" p ON e."personaId" = p.id
+      SELECT
+        e.id,
+        e."personaId",
+        e.puesto,
+        e.salario,
+        e."fechaIngreso",
+        e.activo,
+        json_build_object(
+          'id',        p.id,
+          'nombre',    p.nombre,
+          'apellido',  p.apellido,
+          'dni',       p.dni,
+          'telefono',  p.telefono,
+          'direccion', p.direccion,
+          'fechaNac',  p."fechaNac",
+          'createdAt', p."createdAt",
+          'updatedAt', p."updatedAt",
+          'user',      json_build_object(
+                          'correo', COALESCE(u.correo, ''),
+                          'activo', COALESCE(u.activo, false),
+                          'rol',    u.rol
+                       )
+        ) AS persona,
+        u.correo AS correo,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'especialidad', json_build_object('id', esp.id, 'nombre', esp.nombre)
+            )
+          ) FILTER (WHERE esp.id IS NOT NULL),
+          '[]'
+        ) AS especialidades
+      FROM "Empleado" e
+      JOIN "Persona" p ON p.id = e."personaId"
+      LEFT JOIN "User" u ON u."personaId" = p.id
+      LEFT JOIN "EspecialidadDoctor" ed ON ed."doctorId" = e.id
+      LEFT JOIN "Especialidad" esp ON esp.id = ed."especialidadId"
+      GROUP BY e.id, e."personaId", e.puesto, e.salario, e."fechaIngreso",
+               e.activo, p.id, u.correo, u.activo, u.rol
+      ORDER BY e.id
     `;
     const result = await this.db.pool.query(query);
     return result.rows;
@@ -126,7 +208,7 @@ export class EmpleadoService {
       if (personaFields.length > 0) {
         personaValues.push(personaId);
         const updatePersonaQuery = `
-          UPDATE "Persona" SET ${personaFields.join(', ')} 
+          UPDATE "Persona" SET ${personaFields.join(', ')}, "updatedAt" = CURRENT_TIMESTAMP
           WHERE id = $${pIndex} 
           RETURNING *;
         `;

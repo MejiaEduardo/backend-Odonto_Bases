@@ -1,4 +1,14 @@
+/**
+ * Estados de una cita. Debe coincidir con el enum "EstadoCita" de PostgreSQL.
+ *
+ * Flujo:
+ *   SOLICITADA -> PENDIENTE -> CONFIRMADA -> COMPLETADA
+ *   (el cliente pide)  (recepcion aprueba)  (cliente confirma)  (doctor atiende)
+ *
+ * CANCELADA es alcanzable desde cualquier punto.
+ */
 export enum EstadoCita {
+  SOLICITADA = 'SOLICITADA',
   PENDIENTE = 'PENDIENTE',
   COMPLETADA = 'COMPLETADA',
   CANCELADA = 'CANCELADA',

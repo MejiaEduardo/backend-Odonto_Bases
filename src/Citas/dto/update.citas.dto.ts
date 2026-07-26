@@ -9,8 +9,14 @@ export class UpdateCitaDto extends PartialType(CreateCitaDto){
      @ApiPropertyOptional({ description: 'Fecha de la cita' })
   fecha?: string;
 
+  /*
+    OJO: sin valor por defecto a proposito. Con `transform: true` en el
+    ValidationPipe, un default aqui se aplicaria aunque el cliente no envie
+    el campo, y toda edicion resetearia el estado a PENDIENTE en silencio.
+    Si no viene, el service conserva el estado actual.
+  */
   @ApiPropertyOptional({ description: 'Estado de la cita', enum: EstadoCita })
-  estado?: EstadoCita = EstadoCita.PENDIENTE;
+  estado?: EstadoCita;
 
   @ApiPropertyOptional({
     description: 'Horario de la cita',

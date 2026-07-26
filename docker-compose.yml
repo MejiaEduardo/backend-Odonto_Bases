@@ -1,0 +1,63 @@
+# =====================================================================
+#  PostgreSQL para la Clínica Odontológica
+# =====================================================================
+#
+#  OJO: este proyecto usa PostgreSQL, NO SQL Server.
+#  SQL Server Management Studio no sirve: el esquema usa SERIAL,
+#  CREATE TYPE ... AS ENUM y pg_get_serial_sequence, que son sintaxis
+#  exclusiva de PostgreSQL.
+#
+#  Levantar:
+#      docker compose up -d
+#
+#  Ver que este corriendo:
+#      docker compose ps
+#
+#  Cargar el esquema y los datos (desde esta misma carpeta).
+#
+#  OJO: en PowerShell el operador "<" NO existe (da ParserError). Por eso
+#  copiamos los archivos dentro del contenedor y los ejecutamos con -f.
+#  De paso se evita que PowerShell corrompa los acentos al canalizar UTF-8.
+#
+#      docker cp tablas.sql            odonto-db:/tmp/
+#      docker cp datos.sql             odonto-db:/tmp/
+#      docker cp arreglar-passwords.sql odonto-db:/tmp/
+#
+#      docker exec odonto-db psql -U postgres -d odontologia -f /tmp/tablas.sql
+#      docker exec odonto-db psql -U postgres -d odontologia -f /tmp/datos.sql
+#      docker exec odonto-db psql -U postgres -d odontologia -f /tmp/arreglar-passwords.sql
+#
+#  Entrar a la consola de la base:
+#      docker exec -it odonto-db psql -U postgres -d odontologia
+#
+#  Apagar (los datos se conservan):
+#      docker compose down
+#
+#  Borrar TODO y empezar de cero:
+#      docker compose down -v
+# =====================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: odonto-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: odonto123
+      POSTGRES_DB: odontologia
+    ports:
+      # 5433 en el host para NO chocar con el PostgreSQL instalado en Windows,
+      # que ocupa el 5432. Dentro del contenedor sigue siendo 5432.
+      # El .env del backend debe usar DB_PORT=5433
+      - "5433:5432"
+    volumes:
+      - odonto_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d odontologia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  odonto_data:

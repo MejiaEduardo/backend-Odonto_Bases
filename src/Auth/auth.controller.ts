@@ -16,6 +16,8 @@ import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { AuthPayloadDto } from './dto/auth.dto';
 import { SignupDto } from './dto/signup.dto';
+import { GOOGLE_HABILITADO } from './config/google.enabled';
+import { JwtAuthGuard } from './guards/jwt.guard';
 
 
 interface RequestWithUser extends Request {
@@ -76,6 +78,36 @@ export class AuthController {
   }
 
 
+  /**
+   * Le dice al frontend si el login con Google esta configurado.
+   *
+   * Sin esto el boton se mostraba siempre y, al no haber credenciales,
+   * respondia 500 "Unknown authentication strategy 'google'". Ahora la
+   * pantalla de login lo oculta cuando no esta disponible.
+   */
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Datos del usuario dueño del token' })
+  @ApiResponse({ status: 200, description: 'Perfil del usuario autenticado' })
+  @ApiResponse({ status: 401, description: 'Token ausente, inválido o vencido' })
+  async me(@Req() req: Request & { user?: { correo?: string } }) {
+    const correo = req.user?.correo;
+    if (!correo) {
+      throw new HttpException(
+        { message: 'Token sin correo', code: 11 },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const result = await this.authService.obtenerPerfil(correo);
+    return this.throwIfError(result, 0, LOGIN_CODE_TO_HTTP_STATUS);
+  }
+
+  @Get('google/status')
+  @ApiOperation({ summary: 'Indica si el login con Google esta disponible' })
+  googleStatus() {
+    return { habilitado: GOOGLE_HABILITADO };
+  }
+
   @Get('google')
   @UseGuards(AuthGuard('google'))
   @ApiOperation({ summary: 'Iniciar el flujo de autenticación con Google' })
@@ -98,7 +130,14 @@ export class AuthController {
         .json(result);
     }
 
-    // Ajusta esta redirección a la URL real de tu frontend
-    return res.redirect(`http://localhost:5173/auth/callback?token=${result.token}`);
+    /*
+     * El frontend recoge el token en /auth/callback, lo guarda y pide
+     * GET /auth/me para completar los datos del usuario.
+     * La URL sale del .env para no dejarla clavada a localhost.
+     */
+    const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
+    return res.redirect(
+      `${frontend}/auth/callback?token=${encodeURIComponent(result.token)}`,
+    );
   }
 }

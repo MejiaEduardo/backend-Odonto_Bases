@@ -235,16 +235,29 @@ export class AuthService {
         }
 
         hashedPassword = await bcrypt.hash(password, 10);
+      }
 
-        if (dni) {
-          const dniExists = await client.query(
-            `SELECT id FROM "Persona" WHERE dni = $1 LIMIT 1`,
-            [dni],
-          );
-          if (dniExists.rows.length > 0) {
-            await client.query('ROLLBACK');
-            return { message: 'El DNI ya existe', code: 9 };
-          }
+      /*
+       * Comprobacion de DNI repetido.
+       *
+       * Antes estaba DENTRO del `if (!isSocial)`, asi que el alta con
+       * Google la saltaba entera y creaba una Persona nueva aunque ese
+       * DNI ya estuviera registrado. Ahora corre siempre.
+       *
+       * Se compara sin espacios sobrantes: '0801-1990-00123 ' y
+       * '0801-1990-00123' son la misma identidad, y guardados tal cual
+       * el indice unico los trataria como distintos.
+       */
+      const dniLimpio = dni?.trim() || null;
+
+      if (dniLimpio) {
+        const dniExists = await client.query(
+          `SELECT id FROM "Persona" WHERE TRIM(dni) = $1 LIMIT 1`,
+          [dniLimpio],
+        );
+        if (dniExists.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return { message: 'El DNI ya existe', code: 9 };
         }
       }
 
@@ -256,11 +269,11 @@ export class AuthService {
         RETURNING *
         `,
         [
-          nombre,
-          apellido,
-          dni || null,
-          telefono || null,
-          direccion || null,
+          nombre?.trim(),
+          apellido?.trim(),
+          dniLimpio,
+          telefono?.trim() || null,
+          direccion?.trim() || null,
           fechaNac ? new Date(fechaNac) : null,
         ],
       );
@@ -299,10 +312,87 @@ export class AuthService {
       };
     } catch (error) {
       await client.query('ROLLBACK');
+
+      /*
+       * 23505 = unique_violation. Salta cuando el indice unico de la base
+       * atrapa un duplicado que la comprobacion previa no vio, por ejemplo
+       * si dos registros llegan a la vez. Sin este bloque, el usuario
+       * recibiria un 500 generico en lugar de saber que el dato ya existe.
+       */
+      const pgError = error as { code?: string; constraint?: string };
+      if (pgError?.code === '23505') {
+        if (pgError.constraint === 'Persona_dni_key') {
+          return { message: 'El DNI ya existe', code: 9 };
+        }
+        if (pgError.constraint === 'User_correo_key') {
+          return { message: 'El correo ya está registrado', code: 12 };
+        }
+      }
+
       console.error('Error en signupUser:', error);
       return { message: 'Error interno del servidor', code: 500 };
     } finally {
       client.release();
+    }
+  }
+
+  /**
+   * Devuelve el usuario dueño de un token ya validado.
+   *
+   * Lo usa GET /auth/me. Hace falta porque el callback de Google solo
+   * puede mandar el token en la URL: el objeto completo del usuario no
+   * cabe ahi de forma razonable, asi que el frontend lo pide aparte.
+   *
+   * Nunca devuelve los hashes de contraseña.
+   */
+  async obtenerPerfil(correo: string): Promise<AuthResult> {
+    try {
+      const { rows } = await this.db.pool.query(
+        `
+        SELECT
+          u.*,
+          json_build_object(
+            'id', p.id,
+            'nombre', p.nombre,
+            'apellido', p.apellido,
+            'dni', p.dni,
+            'telefono', p.telefono,
+            'direccion', p.direccion
+          ) AS persona
+        FROM "User" u
+        JOIN "Persona" p ON p.id = u."personaId"
+        WHERE u.correo = $1
+        LIMIT 1
+        `,
+        [correo],
+      );
+
+      if (rows.length === 0) {
+        return { message: 'Credenciales Invalidas', code: 11 };
+      }
+
+      const user = rows[0];
+      delete user.password;
+      delete user.passwordTemporal;
+
+      /*
+       * Mismo agregado que hace validateUser. Sin esto, quien entre por
+       * Google siendo empleado tendria empleadoId indefinido, y el
+       * frontend (useAuth -> idEmpleado) leeria 0: no podria firmar
+       * consultas ni ver sus expedientes.
+       */
+      const empleado = await this.db.pool.query(
+        `SELECT id FROM "Empleado" WHERE "personaId" = $1 LIMIT 1`,
+        [user.personaId],
+      );
+      if (empleado.rows[0]) {
+        user.empleadoId = empleado.rows[0].id;
+      }
+
+      return { message: 'Perfil obtenido', code: 0, token: '', user };
+    } catch (error) {
+      console.error('Error al obtener el perfil:', error);
+      return { message: 'Error interno del servidor', code: 500 };
     }
   }
 

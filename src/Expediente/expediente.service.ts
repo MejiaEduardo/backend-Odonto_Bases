@@ -90,10 +90,19 @@ export class ExpedienteService {
 
   async findAll() {
     const result = await this.db.pool.query(
-      `SELECT e.*, p.nombre, p.apellido
+      /*
+       * Se agregan dni y correo porque en la lista aparecian dos fichas
+       * con el mismo nombre y no habia forma de saber cual era cual: solo
+       * se veian los numeros internos de expediente y paciente.
+       *
+       * El orden es alfabetico para que los homonimos queden pegados y
+       * salten a la vista en lugar de quedar dispersos por la lista.
+       */
+      `SELECT e.*, p.nombre, p.apellido, p.dni, u.correo
        FROM "Expediente" e
        JOIN "Persona" p ON p.id = e."pacienteId"
-       ORDER BY e.id`,
+       LEFT JOIN "User" u ON u."personaId" = p.id
+       ORDER BY LOWER(p.nombre), LOWER(p.apellido), e.id`,
     );
     return result.rows;
   }
@@ -102,9 +111,10 @@ export class ExpedienteService {
     const columna = idPaciente ? '"pacienteId"' : 'id';
 
     const result = await this.db.pool.query(
-      `SELECT e.*, p.nombre, p.apellido
+      `SELECT e.*, p.nombre, p.apellido, p.dni, u.correo
        FROM "Expediente" e
        JOIN "Persona" p ON p.id = e."pacienteId"
+       LEFT JOIN "User" u ON u."personaId" = p.id
        WHERE e.${columna} = $1`,
       [id],
     );
@@ -316,7 +326,43 @@ export class ExpedienteService {
           data.doctorId,
         ],
       );
-      return result.rows[0];
+      const detalle = result.rows[0];
+
+      /*
+       * Al registrar la consulta, la cita correspondiente se marca como
+       * COMPLETADA automaticamente. Es lo que habilita a recepcion para
+       * facturarla: solo se pueden facturar citas completadas.
+       *
+       * Se busca la cita de ESE paciente con ESE doctor en la fecha del
+       * detalle que siga activa. Si no hay ninguna (p. ej. el doctor
+       * documenta algo sin cita previa), simplemente no se hace nada:
+       * el detalle del expediente se guarda igual.
+       */
+      try {
+        const { rows: citas } = await this.db.pool.query(
+          `
+          UPDATE "Cita" c
+          SET estado = 'COMPLETADA', "updatedAt" = CURRENT_TIMESTAMP
+          FROM "Expediente" e
+          WHERE e.id = $1
+            AND c."pacienteId" = e."pacienteId"
+            AND c."doctorId" = $2
+            AND c.fecha = $3
+            AND c.estado IN ('PENDIENTE', 'CONFIRMADA')
+          RETURNING c.id
+          `,
+          [data.expedienteId, data.doctorId, String(data.fecha).split('T')[0]],
+        );
+
+        if (citas.length > 0) {
+          console.log(`Cita ${citas[0].id} marcada como COMPLETADA al registrar la consulta.`);
+        }
+      } catch (e) {
+        // No se interrumpe el guardado del expediente por esto
+        console.error('No se pudo completar la cita asociada:', e);
+      }
+
+      return detalle;
     } catch (error) {
       console.error(error);
       throw new InternalServerErrorException(
