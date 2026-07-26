@@ -121,11 +121,8 @@ backend-Odonto_Bases/
 
 | Archivo | Contenido |
 |---|---|
-| [`INSTALACION.pdf`](INSTALACION.pdf) | montar el proyecto desde cero |
-| [`ESTADO_ACTUAL.md`](ESTADO_ACTUAL.md) | en qué quedó el trabajo y qué falta |
+| [`INSTALACION.pdf`](INSTALACION.pdf) | montar el proyecto desde cero: instalación, base de datos, pgAdmin y errores frecuentes |
 | [`PRUEBAS_PERMISOS.md`](PRUEBAS_PERMISOS.md) | permisos por rol y cómo verificarlos |
-| [`GUIA_LOGIN_GOOGLE.md`](GUIA_LOGIN_GOOGLE.md) | activar el login con Google |
-| [`SUBIR_A_GITHUB.md`](SUBIR_A_GITHUB.md) | publicar cambios sin filtrar credenciales |
 
 ---
 
@@ -147,5 +144,10 @@ Hay que levantar los dos para que el sistema funcione.
   vacía.
 - **Firebase es opcional.** Sin sus credenciales el backend arranca igual;
   lo único que no funciona es adjuntar archivos a los expedientes.
+- **El login con Google está implementado pero desactivado.** Faltan
+  `GOOGLE_CLIENT_ID` y `GOOGLE_SECRET` en el `.env`, que se obtienen
+  creando unas credenciales OAuth en Google Cloud Console. Sin ellas el
+  botón simplemente no aparece en el login y todo lo demás funciona
+  normal. Pedile los pasos a Fernando si vas a activarlo.
 - Antes de subir cambios, comprobá que compila:
   `npx tsc --noEmit -p tsconfig.json` debe dar 0 errores.

@@ -55,3 +55,10 @@ pids
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 !src/logs/
+
+# Notas de trabajo, no van al repositorio
+ESTADO_ACTUAL.md
+SUBIR_A_GITHUB.md
+GUIA_LOGIN_GOOGLE.md
+limpiar-duplicado-david.sql
+diagnostico-duplicados.sql
