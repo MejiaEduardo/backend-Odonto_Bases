@@ -16,6 +16,14 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   public readonly pool: Pool;
 
   constructor(private config: ConfigService) {
+
+     console.log('DB_HOST:', this.config.get('DB_HOST'));
+  console.log('DB_PORT:', this.config.get('DB_PORT'));
+  console.log('DB_USER:', this.config.get('DB_USER'));
+  console.log('DB_PASSWORD:', this.config.get('DB_PASSWORD'));
+  console.log('DB_NAME:', this.config.get('DB_NAME'));
+
+
     this.pool = new Pool({
       host: this.config.get<string>('DB_HOST'),
       port: this.config.get<number>('DB_PORT'),

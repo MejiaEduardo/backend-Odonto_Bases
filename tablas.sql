@@ -21,6 +21,13 @@ CREATE TABLE "Persona" (
     CONSTRAINT "Persona_pkey" PRIMARY KEY ("id")
 );
 
+ALTER TABLE "Persona"
+ADD COLUMN "primerNombre" TEXT,
+ADD COLUMN "segundoNombre" TEXT,
+ADD COLUMN "primerApellido" TEXT,
+ADD COLUMN "segundoApellido" TEXT;
+
+
 -- CreateTable
 CREATE TABLE "User" (
     "id" SERIAL NOT NULL,

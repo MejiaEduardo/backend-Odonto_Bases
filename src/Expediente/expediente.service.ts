@@ -31,7 +31,7 @@ export class ExpedienteService {
 
     // validar que el expediente no exista
     const existente = await this.db.pool.query(
-      'SELECT id FROM "Expediente" WHERE "pacienteId" = $1',
+      'SELECT id FROM "Expediente" WHERE "pacienteId" = $1',                      
       [pacienteId],
     );
     if (existente.rowCount && existente.rowCount > 0) {
