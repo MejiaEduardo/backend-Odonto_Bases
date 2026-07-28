@@ -640,14 +640,16 @@ CREATE TABLE "ExpedienteDetalle" (
     CONSTRAINT "ExpedienteDetalle_empleadoId_fkey"   FOREIGN KEY ("empleadoId")   REFERENCES "Empleado"(id)   ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
--- filePath es calculado: siempre fue '/archivos/expedientes/<expedienteId>/'.
+-- filePath es la llave del archivo dentro de Firebase Storage: con ella se
+-- genera el enlace de descarga y con ella se borra. Es calculada porque el
+-- backend siempre la arma igual: `archivos/${storageName}`.
 CREATE TABLE "ExpedienteArchivo" (
     id              SERIAL       PRIMARY KEY,
     "expedienteId"  INTEGER      NOT NULL,
     "nombreArchivo" TEXT         NOT NULL,
     "tipoArchivo"   TEXT,
     "storageName"   TEXT         NOT NULL UNIQUE,
-    "filePath"      TEXT GENERATED ALWAYS AS ('/archivos/expedientes/' || "expedienteId" || '/') STORED,
+    "filePath"      TEXT GENERATED ALWAYS AS ('archivos/' || "storageName") STORED,
     "creadoPorId"   INTEGER      NOT NULL,
     "createdAt"     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt"     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -25,6 +25,7 @@ docker cp 002_migrar_datos_persona.sql   odonto-db:/tmp/
 docker cp db/003_pulido_esquema.sql      odonto-db:/tmp/
 docker cp db/004_correcciones_ingeniero.sql odonto-db:/tmp/
 docker cp db/005_paciente_y_fiscal.sql   odonto-db:/tmp/
+docker cp db/006_filepath_desde_storagename.sql odonto-db:/tmp/
 
 # 3. Ejecutarlos EN ESTE ORDEN
 docker exec odonto-db psql -U postgres -d odontologia -f /tmp/001_agregar_campos_persona.sql
@@ -32,6 +33,7 @@ docker exec odonto-db psql -U postgres -d odontologia -f /tmp/002_migrar_datos_p
 docker exec odonto-db psql -U postgres -d odontologia -f /tmp/003_pulido_esquema.sql
 docker exec odonto-db psql -U postgres -d odontologia -f /tmp/004_correcciones_ingeniero.sql
 docker exec odonto-db psql -U postgres -d odontologia -f /tmp/005_paciente_y_fiscal.sql
+docker exec odonto-db psql -U postgres -d odontologia -f /tmp/006_filepath_desde_storagename.sql
 ```
 
 Cada migración avisa al terminar (`Migracion 00X aplicada correctamente`).
@@ -72,9 +74,13 @@ El orden completo, ya verificado de punta a punta sobre una base vacía:
 | 12 | `db/003_pulido_esquema.sql` | Tipos, catálogos, integridad e índices |
 | 13 | `db/004_correcciones_ingeniero.sql` | Permisos, auditoría, facturación |
 | 14 | `db/005_paciente_y_fiscal.sql` | Paciente, `fechaHora` y punto 6.2 |
+| 15 | `db/006_filepath_desde_storagename.sql` | Corrige la ruta de los archivos de expediente |
 
 Los pasos 10 y 11 ya no hacen falta en una base nueva, porque `tablas.sql` crea
 esas columnas. Se dejan porque son inofensivos: `001` usa `IF NOT EXISTS`.
+
+El paso 15 tampoco hace falta si la `004` que corriste ya es la corregida: la
+`006` lo detecta y no cambia nada. Correrla de más no cuesta.
 
 **Atajo:** `esquema_final.sql` crea la base entera ya corregida, sin pasar por
 las catorce. Pero la deja **vacía**, solo con los catálogos. Sirve para un
@@ -91,6 +97,7 @@ entorno limpio, no para tener los datos de prueba.
 | `004_correcciones_ingeniero.sql` | Permisos, auditoría, `empleadoId`, tokens, recordatorios, rango de facturación |
 | `005_paciente_y_fiscal.sql` | `Cita.fechaHora`, tabla `Paciente`, `Emisor`, RTN, importes gravados, anulación de facturas |
 | `005_rollback.sql` | Revierte la 005 |
+| `006_filepath_desde_storagename.sql` | Corrige `filePath`: la 004 lo derivaba del `expedienteId` y así rompía la ruta real de los archivos subidos. Ahora se deriva de `storageName` |
 | `esquema_final.sql` | Crea la base desde cero, ya con todo aplicado. Es la documentación del modelo |
 | `CAMBIOS_Y_IMPACTO.md` | Qué cambió, por qué, y qué queda pendiente |
 | `Correcciones_Base_de_Datos.pdf` | El informe de la auditoría |

@@ -429,21 +429,43 @@ ALTER TABLE "Cita"
 -- ############################################################################
 -- PARTE 6 - ExpedienteArchivo.filePath: dato derivado
 -- ############################################################################
--- HALLAZGO DE AUDITORIA: todos los valores son '/archivos/expedientes/<id>/',
--- siempre deducibles del expedienteId. Se convierte en columna calculada.
+-- "filePath" es la LLAVE del archivo dentro de Firebase Storage: es la que se
+-- usa para generar el enlace de descarga y para borrarlo
+-- (storage.service.ts, bucket.file(filePath)).
+--
+-- Y es derivable, porque el backend siempre la arma igual:
+--
+--     const filePath = `archivos/${storageName}`;   // storage.service.ts
+--
+-- O sea que depende de "storageName", que ya es UNICO en la tabla.
+--
+-- OJO -- ERROR CORREGIDO: la primera version de esta migracion la derivaba del
+-- "expedienteId" ('/archivos/expedientes/<id>/'). Ese es el valor que tienen
+-- las filas de PRUEBA de datos.sql, que apuntan a una carpeta y no a un
+-- archivo. Con archivos subidos de verdad ese patron no se cumple, y convertir
+-- la columna asi le habria pisado la ruta real: los archivos habrian quedado
+-- imposibles de descargar y de borrar.
 -- ----------------------------------------------------------------------------
 
 DO $$
 DECLARE
     v_malos INTEGER;
+    v_lista TEXT;
 BEGIN
-    SELECT count(*) INTO v_malos
+    -- Se admiten dos formas: la real ('archivos/<storageName>') y la de los
+    -- datos de prueba ('/archivos/expedientes/<id>/'), que se normaliza.
+    -- Cualquier otra cosa es una ruta que no sabemos reconstruir: se aborta
+    -- antes de perderla.
+    SELECT count(*), string_agg(id || ': ' || "filePath", ' | ')
+      INTO v_malos, v_lista
     FROM "ExpedienteArchivo"
-    WHERE "filePath" <> '/archivos/expedientes/' || "expedienteId" || '/';
+    WHERE "filePath" <> 'archivos/' || "storageName"
+      AND "filePath" <> '/archivos/expedientes/' || "expedienteId" || '/';
 
     IF v_malos > 0 THEN
         RAISE EXCEPTION
-            'Migracion abortada: % archivo(s) con filePath fuera del patron esperado. Revisar antes de convertir la columna.', v_malos;
+            'Migracion abortada: % archivo(s) con un filePath que no se puede reconstruir. Revisalos antes de continuar -> %',
+            v_malos, v_lista;
     END IF;
 END $$;
 
@@ -451,7 +473,7 @@ ALTER TABLE "ExpedienteArchivo" DROP COLUMN "filePath";
 
 ALTER TABLE "ExpedienteArchivo"
     ADD COLUMN "filePath" TEXT
-    GENERATED ALWAYS AS ('/archivos/expedientes/' || "expedienteId" || '/') STORED;
+    GENERATED ALWAYS AS ('archivos/' || "storageName") STORED;
 
 
 -- ############################################################################
