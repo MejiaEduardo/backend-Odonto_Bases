@@ -104,6 +104,17 @@ ALTER TABLE "Persona"
 --     DNI cargado siguen siendo validas.
 UPDATE "Persona" SET dni = NULLIF(btrim(dni), '');
 
+-- migracion-evitar-duplicados.sql ya crea un indice parcial con este mismo
+-- nombre ("Persona_dni_key" ... WHERE dni IS NOT NULL). Quien instalo la base
+-- siguiendo INSTALACION.md lo tiene; quien no corrio ese script, no.
+--
+-- Se elimina si existe, para que la migracion corra en los dos casos. La
+-- restriccion UNIQUE de abajo cumple exactamente lo mismo -- en PostgreSQL
+-- UNIQUE ya permite varios NULL -- y ademas queda registrada como
+-- restriccion, no solo como indice suelto.
+ALTER TABLE "Persona" DROP CONSTRAINT IF EXISTS "Persona_dni_key";
+DROP INDEX IF EXISTS "Persona_dni_key";
+
 ALTER TABLE "Persona"
     ADD CONSTRAINT "Persona_dni_key" UNIQUE (dni),
     ADD CONSTRAINT "Persona_dni_formato_check"

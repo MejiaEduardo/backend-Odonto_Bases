@@ -137,6 +137,22 @@ romper nada.
 > persona concreta (id 22) de la base de Fernando. En una instalación
 > nueva no existe y no hace falta.
 
+### 3.9 FALTAN LAS MIGRACIONES NUEVAS — no se salten este paso
+
+Con lo de arriba la base queda **incompleta**: le faltan los cuatro campos de
+nombre, la tabla `Paciente` y los datos fiscales. El backend actual **no
+funciona** contra una base que se quedó en el paso 8.
+
+Hay que seguir con `001`, `002` y las tres migraciones de la carpeta `db/`,
+en ese orden. Están explicadas en **[`db/README.md`](db/README.md)**, con los
+comandos listos para copiar y pegar.
+
+Para comprobar que quedó al día:
+
+```powershell
+node db/comprobar-sistema.mjs
+```
+
 ### Comprobar que quedó bien
 
 ```powershell
