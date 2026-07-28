@@ -137,10 +137,12 @@ export class ModificarInfoService {
    * del cliente que columna se escribe. Ahora la lista es explicita.
    */
   async completarDatosPorCorreo(correo: string, data: UpdateModificarInfoDto) {
-    // 1. Buscar el usuario por correo
+    // 1. Buscar el usuario por correo, con los datos que ya tiene guardados
     const result = await this.db.pool.query(
-      `SELECT u.id AS "userId", u."personaId"
+      `SELECT u.id AS "userId", u."personaId",
+              p.dni AS "dniActual", p.rtn AS "rtnActual", p.telefono AS "telefonoActual"
        FROM "User" u
+       JOIN "Persona" p ON p.id = u."personaId"
        WHERE LOWER(u.correo) = LOWER(TRIM($1))`,
       [correo],
     );
@@ -155,8 +157,21 @@ export class ModificarInfoService {
     const dni = data.dni !== undefined ? normalizarDni(data.dni) : undefined;
     const rtn = data.rtn !== undefined ? normalizarRtn(data.rtn) : undefined;
 
-    // 2. Validar teléfono si viene
-    if (telefono) {
+    /*
+     * Las comprobaciones de "ya esta en uso" solo tienen sentido cuando el
+     * valor CAMBIA.
+     *
+     * Antes se comprobaban siempre, y eso dejaba gente encerrada: el formulario
+     * manda el telefono precargado aunque no se toque, asi que si dos personas
+     * ya compartian telefono -- cosa que el registro permite, porque la base no
+     * tiene esa restriccion -- ninguna de las dos podia guardar NADA, ni
+     * siquiera cambiar su direccion.
+     */
+    const cambia = (nuevo: string | null | undefined, actual: string | null) =>
+      nuevo !== undefined && nuevo !== null && nuevo !== actual;
+
+    // 2. Validar teléfono solo si cambia
+    if (cambia(telefono, user.telefonoActual)) {
       const telResult = await this.db.pool.query(
         'SELECT id FROM "Persona" WHERE telefono = $1 AND id != $2',
         [telefono, user.personaId],
@@ -166,8 +181,8 @@ export class ModificarInfoService {
       }
     }
 
-    // 3. Validar DNI si viene
-    if (dni) {
+    // 3. Validar DNI solo si cambia
+    if (cambia(dni, user.dniActual)) {
       const dniResult = await this.db.pool.query(
         'SELECT id FROM "Persona" WHERE dni = $1 AND id != $2',
         [dni, user.personaId],
@@ -177,8 +192,8 @@ export class ModificarInfoService {
       }
     }
 
-    // 4. Validar RTN si viene
-    if (rtn) {
+    // 4. Validar RTN solo si cambia
+    if (cambia(rtn, user.rtnActual)) {
       const rtnResult = await this.db.pool.query(
         'SELECT id FROM "Persona" WHERE rtn = $1 AND id != $2',
         [rtn, user.personaId],
