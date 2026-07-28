@@ -34,6 +34,31 @@ SET client_min_messages = WARNING;
 
 
 -- ############################################################################
+-- PARTE 0 - COMPROBACIONES PREVIAS
+-- ############################################################################
+DO $$
+BEGIN
+    IF to_regclass('public."Permiso"') IS NOT NULL THEN
+        RAISE EXCEPTION
+            'La migracion 004 YA ESTA APLICADA en esta base (la tabla "Permiso" ya existe). No hace falta volver a correrla.';
+    END IF;
+
+    IF to_regclass('public."Rol"') IS NULL THEN
+        RAISE EXCEPTION
+            'FALTA LA MIGRACION 003 (no existe la tabla "Rol"). Corra db/003_pulido_esquema.sql primero.';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'Persona'
+                     AND column_name = 'nombreCompleto')
+    THEN
+        RAISE EXCEPTION
+            'FALTA LA MIGRACION 003 ("Persona" no tiene la columna nombreCompleto). Corra db/003_pulido_esquema.sql primero.';
+    END IF;
+END $$;
+
+
+-- ############################################################################
 -- PARTE 1 - NOMBRES MNEMONICOS: doctorId -> empleadoId
 -- ############################################################################
 -- PEDIDO DEL INGENIERO:

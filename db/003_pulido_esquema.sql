@@ -27,6 +27,29 @@ SET client_min_messages = WARNING;
 
 
 -- ############################################################################
+-- PARTE 0 - COMPROBACIONES PREVIAS
+-- ############################################################################
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'Persona'
+                     AND column_name = 'nombre')
+    THEN
+        RAISE EXCEPTION
+            'La migracion 003 YA ESTA APLICADA en esta base ("Persona" ya no tiene la columna nombre). No hace falta volver a correrla.';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'Persona'
+                     AND column_name = 'primerNombre')
+    THEN
+        RAISE EXCEPTION
+            'FALTA LA MIGRACION 001 ("Persona" no tiene la columna primerNombre). Corra 001_agregar_campos_persona.sql y 002_migrar_datos_persona.sql primero.';
+    END IF;
+END $$;
+
+
+-- ############################################################################
 -- PARTE 1 - PERSONA: eliminar la duplicacion de nombre / apellido
 -- ############################################################################
 -- PROBLEMA: la tabla guardaba el mismo dato dos veces (nombre/apellido y

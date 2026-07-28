@@ -43,6 +43,51 @@ SET client_min_messages = WARNING;
 
 
 -- ############################################################################
+-- PARTE 0 - COMPROBACIONES PREVIAS
+-- ############################################################################
+-- Esta migracion supone que la 003 y la 004 ya corrieron. Si no, fallaba 30
+-- lineas mas abajo con un "operator does not exist: text + text" que no le
+-- dice nada a nadie, seguido de setenta lineas de "transaction is aborted".
+-- Mejor avisar de una y decir que hay que hacer.
+-- ----------------------------------------------------------------------------
+DO $$
+BEGIN
+    -- Ya aplicada
+    IF to_regclass('public."Paciente"') IS NOT NULL THEN
+        RAISE EXCEPTION
+            'La migracion 005 YA ESTA APLICADA en esta base (la tabla "Paciente" ya existe). No hace falta volver a correrla.';
+    END IF;
+
+    -- Falta la 003: la senal es que "Cita".fecha siga siendo texto
+    IF (SELECT data_type FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'Cita' AND column_name = 'fecha') = 'text'
+    THEN
+        RAISE EXCEPTION
+            'FALTA LA MIGRACION 003. En esta base "Cita".fecha todavia es texto. Corra primero db/003_pulido_esquema.sql, despues db/004_correcciones_ingeniero.sql, y recien entonces esta.';
+    END IF;
+
+    IF to_regclass('public."Rol"') IS NULL THEN
+        RAISE EXCEPTION
+            'FALTA LA MIGRACION 003 (no existe la tabla "Rol"). Corra db/003_pulido_esquema.sql primero.';
+    END IF;
+
+    -- Falta la 004
+    IF to_regclass('public."RangoFacturacion"') IS NULL THEN
+        RAISE EXCEPTION
+            'FALTA LA MIGRACION 004 (no existe la tabla "RangoFacturacion"). Corra db/004_correcciones_ingeniero.sql primero.';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'Cita'
+                     AND column_name = 'empleadoId')
+    THEN
+        RAISE EXCEPTION
+            'FALTA LA MIGRACION 004 ("Cita" todavia tiene doctorId en vez de empleadoId). Corra db/004_correcciones_ingeniero.sql primero.';
+    END IF;
+END $$;
+
+
+-- ############################################################################
 -- PARTE 1 - CITA: "fecha" + "hora"  ->  "fechaHora"
 -- ############################################################################
 -- Guardar la fecha y la hora por separado no rompe ninguna forma normal: los
