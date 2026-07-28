@@ -49,11 +49,16 @@ export class ExpedienteArchivoService {
 
     // crear un nuevo registro de ExpedienteArchivo
     async create(data: CreateExpedienteArchivoDto): Promise<ExpedienteArchivo> {
+        /*
+         * "filePath" NO se inserta: desde la migracion 004 es una columna
+         * GENERADA ('/archivos/expedientes/<expedienteId>/'). Siempre fue ese
+         * valor calculado a mano; incluirla ahora da error.
+         */
         const { rows } = await this.db.pool.query<ExpedienteArchivo>(
             `
             INSERT INTO "ExpedienteArchivo"
-              ("expedienteId", "nombreArchivo", "tipoArchivo", "creadoPorId", "filePath", "storageName", "updatedAt")
-            VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+              ("expedienteId", "nombreArchivo", "tipoArchivo", "creadoPorId", "storageName")
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING *
             `,
             [
@@ -61,7 +66,6 @@ export class ExpedienteArchivoService {
                 data.nombreArchivo,
                 data.tipoArchivo ?? null,
                 data.creadoPorId,
-                data.filePath,
                 data.storageName,
             ],
         );

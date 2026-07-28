@@ -8,6 +8,27 @@ import { CreateExpedienteDto } from './dto/create-expediente.dto';
 import { UpdateExpedienteDto } from './dto/update-expediente.dto';
 import { CreateExpedienteDetalleDto } from './dto/create-expediente-detalle.dto';
 import { DatabaseService } from '../database/datebaseService.service';
+import { idPacienteDesdePersona } from '../common/pacientes';
+import { nombreSql, apellidoSql } from '../common/nombres';
+
+/**
+ * Expedientes.
+ *
+ * Desde la migracion 005 "Expediente" apunta a "Paciente", no a "Persona".
+ * La API sigue recibiendo y devolviendo `pacienteId` como id de PERSONA, que
+ * es lo que tiene el frontend; la traduccion se hace en el borde.
+ *
+ * El puesto del empleado tampoco es texto: es "puestoId" contra el catalogo
+ * "Puesto" (migracion 003).
+ */
+
+/** Consulta reutilizable: puesto del empleado resuelto como texto. */
+const PUESTO_DE_EMPLEADO = `
+  SELECT e.id, pu.nombre AS puesto
+  FROM "Empleado" e
+  JOIN "Puesto" pu ON pu.id = e."puestoId"
+  WHERE e.id = $1
+`;
 
 @Injectable()
 export class ExpedienteService {
@@ -18,12 +39,10 @@ export class ExpedienteService {
     const { doctorId, pacienteId, alergias, enfermedades, medicamentos, observaciones, activo } =
       createExpedienteDto;
 
-    // validar que la persona exista
-    const persona = await this.db.pool.query(
-      'SELECT id FROM "Persona" WHERE id = $1',
-      [pacienteId],
-    );
-    if (persona.rowCount === 0) {
+    // `pacienteId` llega como id de PERSONA: se traduce (y se registra como
+    // paciente si todavia no lo estaba).
+    const idPaciente = await idPacienteDesdePersona(this.db.pool, pacienteId);
+    if (idPaciente === null) {
       throw new NotFoundException(
         `No se encontro la persona con ID ${pacienteId}`,
       );
@@ -31,8 +50,8 @@ export class ExpedienteService {
 
     // validar que el expediente no exista
     const existente = await this.db.pool.query(
-      'SELECT id FROM "Expediente" WHERE "pacienteId" = $1',                      
-      [pacienteId],
+      'SELECT id FROM "Expediente" WHERE "pacienteId" = $1',
+      [idPaciente],
     );
     if (existente.rowCount && existente.rowCount > 0) {
       throw new BadRequestException(
@@ -41,10 +60,7 @@ export class ExpedienteService {
     }
 
     // validar que el doctor exista y tenga el puesto correcto
-    const doctor = await this.db.pool.query(
-      'SELECT id, puesto FROM "Empleado" WHERE id = $1',
-      [doctorId],
-    );
+    const doctor = await this.db.pool.query(PUESTO_DE_EMPLEADO, [doctorId]);
     if (doctor.rowCount === 0 || doctor.rows[0].puesto !== 'DOCTOR') {
       throw new NotFoundException(
         `No se encontro un doctor valido con ID ${doctorId}`,
@@ -57,11 +73,11 @@ export class ExpedienteService {
 
       const nuevo = await client.query(
         `INSERT INTO "Expediente"
-         ("pacienteId", alergias, enfermedades, medicamentos, observaciones, activo, "updatedAt")
-         VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+         ("pacienteId", alergias, enfermedades, medicamentos, observaciones, activo)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
         [
-          pacienteId,
+          idPaciente,
           alergias ?? null,
           enfermedades ?? null,
           medicamentos ?? null,
@@ -71,7 +87,7 @@ export class ExpedienteService {
       );
 
       await client.query(
-        'INSERT INTO "ExpedienteDoctor" ("expedienteId", "doctorId") VALUES ($1, $2)',
+        'INSERT INTO "ExpedienteDoctor" ("expedienteId", "empleadoId") VALUES ($1, $2)',
         [nuevo.rows[0].id, doctorId],
       );
 
@@ -98,24 +114,48 @@ export class ExpedienteService {
        * El orden es alfabetico para que los homonimos queden pegados y
        * salten a la vista en lugar de quedar dispersos por la lista.
        */
-      `SELECT e.*, p.nombre, p.apellido, p.dni, u.correo
+      /*
+       * Se devuelve `pacienteId` como id de PERSONA para no romper las
+       * pantallas, y ademas `pacienteRegistroId` con el id real de "Paciente".
+       */
+      `SELECT e.id, e.alergias, e.enfermedades, e.medicamentos, e.observaciones,
+              e.activo, e."createdAt", e."updatedAt",
+              pa."personaId" AS "pacienteId",
+              e."pacienteId" AS "pacienteRegistroId",
+              p."primerNombre", p."segundoNombre",
+              p."primerApellido", p."segundoApellido",
+              p."nombreCompleto",
+              ${nombreSql('p')}   AS nombre,
+              ${apellidoSql('p')} AS apellido,
+              p.dni, u.correo
        FROM "Expediente" e
-       JOIN "Persona" p ON p.id = e."pacienteId"
+       JOIN "Paciente" pa ON pa.id = e."pacienteId"
+       JOIN "Persona"  p  ON p.id  = pa."personaId"
        LEFT JOIN "User" u ON u."personaId" = p.id
-       ORDER BY LOWER(p.nombre), LOWER(p.apellido), e.id`,
+       ORDER BY LOWER(p."nombreCompleto"), e.id`,
     );
     return result.rows;
   }
 
+  /**
+   * @param id           id del expediente, o id de PERSONA si idPaciente=true
+   * @param idPaciente   busca por paciente en vez de por expediente
+   */
   async findOne(id: number, idPaciente = false) {
-    const columna = idPaciente ? '"pacienteId"' : 'id';
+    // Cuando se busca por paciente, el id que llega es de Persona.
+    const filtro = idPaciente ? 'pa."personaId" = $1' : 'e.id = $1';
 
     const result = await this.db.pool.query(
-      `SELECT e.*, p.nombre, p.apellido, p.dni, u.correo
+      `SELECT e.*, pa."personaId",
+              p."nombreCompleto",
+              ${nombreSql('p')}   AS nombre,
+              ${apellidoSql('p')} AS apellido,
+              p.dni, u.correo
        FROM "Expediente" e
-       JOIN "Persona" p ON p.id = e."pacienteId"
+       JOIN "Paciente" pa ON pa.id = e."pacienteId"
+       JOIN "Persona"  p  ON p.id  = pa."personaId"
        LEFT JOIN "User" u ON u."personaId" = p.id
-       WHERE e.${columna} = $1`,
+       WHERE ${filtro}`,
       [id],
     );
 
@@ -131,9 +171,9 @@ export class ExpedienteService {
     );
 
     const doctores = await this.db.pool.query(
-      `SELECT p.nombre, p.apellido
+      `SELECT p."nombreCompleto"
        FROM "ExpedienteDoctor" ed
-       JOIN "Empleado" emp ON emp.id = ed."doctorId"
+       JOIN "Empleado" emp ON emp.id = ed."empleadoId"
        JOIN "Persona" p ON p.id = emp."personaId"
        WHERE ed."expedienteId" = $1`,
       [expediente.id],
@@ -148,9 +188,10 @@ export class ExpedienteService {
 
     return {
       id: expediente.id,
-      nombrePaciente: `${expediente.nombre} ${expediente.apellido}`,
+      pacienteId: expediente.personaId,
+      nombrePaciente: expediente.nombreCompleto,
       doctores: doctores.rows.map((d) => ({
-        nombre: `${d.nombre} ${d.apellido}`,
+        nombre: d.nombreCompleto,
       })),
       alergias: expediente.alergias,
       enfermedades: expediente.enfermedades,
@@ -165,11 +206,17 @@ export class ExpedienteService {
   // obtener los expedientes por doctor
   async getExpedientesPorDoctor(id: number) {
     const result = await this.db.pool.query(
-      `SELECT e.*, p.nombre, p.apellido
+      `SELECT e.id, e.alergias, e.enfermedades, e.medicamentos, e.observaciones,
+              e.activo, e."createdAt", e."updatedAt",
+              pa."personaId" AS "pacienteId",
+              p."nombreCompleto",
+              ${nombreSql('p')}   AS nombre,
+              ${apellidoSql('p')} AS apellido
        FROM "ExpedienteDoctor" ed
        JOIN "Expediente" e ON e.id = ed."expedienteId"
-       JOIN "Persona" p ON p.id = e."pacienteId"
-       WHERE ed."doctorId" = $1`,
+       JOIN "Paciente" pa  ON pa.id = e."pacienteId"
+       JOIN "Persona"  p   ON p.id  = pa."personaId"
+       WHERE ed."empleadoId" = $1`,
       [id],
     );
 
@@ -193,22 +240,24 @@ export class ExpedienteService {
     }
 
     // validar paciente si se intenta modificar
+    let nuevoIdPaciente: number | null = null;
     if (updateExpedienteDto.pacienteId) {
-      const persona = await this.db.pool.query(
-        'SELECT id FROM "Persona" WHERE id = $1',
-        [updateExpedienteDto.pacienteId],
+      // El DTO trae un id de PERSONA: se traduce al id de "Paciente".
+      nuevoIdPaciente = await idPacienteDesdePersona(
+        this.db.pool,
+        updateExpedienteDto.pacienteId,
       );
-      if (persona.rowCount === 0) {
+      if (nuevoIdPaciente === null) {
         throw new BadRequestException(
           `El ID de paciente ${updateExpedienteDto.pacienteId} no corresponde a una persona existente`,
         );
       }
 
       // un paciente solo puede tener un expediente
-      if (updateExpedienteDto.pacienteId !== actual.rows[0].pacienteId) {
+      if (nuevoIdPaciente !== actual.rows[0].pacienteId) {
         const duplicado = await this.db.pool.query(
           'SELECT id FROM "Expediente" WHERE "pacienteId" = $1',
-          [updateExpedienteDto.pacienteId],
+          [nuevoIdPaciente],
         );
         if (duplicado.rowCount && duplicado.rowCount > 0) {
           throw new BadRequestException(
@@ -220,10 +269,9 @@ export class ExpedienteService {
 
     // validar doctor si se intenta modificar
     if (updateExpedienteDto.doctorId) {
-      const doctor = await this.db.pool.query(
-        'SELECT id, puesto FROM "Empleado" WHERE id = $1',
-        [updateExpedienteDto.doctorId],
-      );
+      const doctor = await this.db.pool.query(PUESTO_DE_EMPLEADO, [
+        updateExpedienteDto.doctorId,
+      ]);
       if (doctor.rowCount === 0 || doctor.rows[0].puesto !== 'DOCTOR') {
         throw new BadRequestException(
           `El ID de doctor ${updateExpedienteDto.doctorId} no corresponde a un empleado con puesto DOCTOR`,
@@ -236,19 +284,19 @@ export class ExpedienteService {
     const valores: any[] = [];
     let i = 1;
 
-    const mapa = {
-      pacienteId: '"pacienteId"',
-      alergias: 'alergias',
-      enfermedades: 'enfermedades',
-      medicamentos: 'medicamentos',
-      observaciones: 'observaciones',
-      activo: 'activo',
+    const nuevosValores: Record<string, unknown> = {
+      '"pacienteId"': nuevoIdPaciente ?? undefined,
+      alergias: updateExpedienteDto.alergias,
+      enfermedades: updateExpedienteDto.enfermedades,
+      medicamentos: updateExpedienteDto.medicamentos,
+      observaciones: updateExpedienteDto.observaciones,
+      activo: updateExpedienteDto.activo,
     };
 
-    for (const [clave, columna] of Object.entries(mapa)) {
-      if (updateExpedienteDto[clave] !== undefined) {
+    for (const [columna, valor] of Object.entries(nuevosValores)) {
+      if (valor !== undefined) {
         campos.push(`${columna} = $${i}`);
-        valores.push(updateExpedienteDto[clave]);
+        valores.push(valor);
         i++;
       }
     }
@@ -313,8 +361,8 @@ export class ExpedienteService {
     try {
       const result = await this.db.pool.query(
         `INSERT INTO "ExpedienteDetalle"
-         ("expedienteId", fecha, motivo, diagnostico, tratamiento, "planTratamiento", "doctorId", "updatedAt")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+         ("expedienteId", fecha, motivo, diagnostico, tratamiento, "planTratamiento", "empleadoId")
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
         [
           data.expedienteId,
@@ -342,12 +390,12 @@ export class ExpedienteService {
         const { rows: citas } = await this.db.pool.query(
           `
           UPDATE "Cita" c
-          SET estado = 'COMPLETADA', "updatedAt" = CURRENT_TIMESTAMP
+          SET estado = 'COMPLETADA'
           FROM "Expediente" e
           WHERE e.id = $1
             AND c."pacienteId" = e."pacienteId"
-            AND c."doctorId" = $2
-            AND c.fecha = $3
+            AND c."empleadoId" = $2
+            AND c.fecha = $3::date
             AND c.estado IN ('PENDIENTE', 'CONFIRMADA')
           RETURNING c.id
           `,
@@ -373,13 +421,17 @@ export class ExpedienteService {
 
   // obtener el historial completo de un paciente por su id
   async getHistorialPaciente(pacienteId: number) {
+    // `pacienteId` llega como id de PERSONA.
     const result = await this.db.pool.query(
-      `SELECT ed.*, p.nombre, p.apellido
+      `SELECT ed.*, p."nombreCompleto",
+              ${nombreSql('p')}   AS nombre,
+              ${apellidoSql('p')} AS apellido
        FROM "ExpedienteDetalle" ed
-       JOIN "Expediente" e ON e.id = ed."expedienteId"
-       JOIN "Empleado" emp ON emp.id = ed."doctorId"
-       JOIN "Persona" p ON p.id = emp."personaId"
-       WHERE e."pacienteId" = $1
+       JOIN "Expediente" e  ON e.id  = ed."expedienteId"
+       JOIN "Paciente"   pa ON pa.id = e."pacienteId"
+       JOIN "Empleado" emp  ON emp.id = ed."empleadoId"
+       JOIN "Persona" p     ON p.id  = emp."personaId"
+       WHERE pa."personaId" = $1
        ORDER BY ed.fecha DESC`,
       [pacienteId],
     );

@@ -2,23 +2,33 @@ import { Injectable } from '@nestjs/common';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../database/datebaseService.service';
 import { CreateFacturaDto } from './dto/create-factura.dto';
+import { nombreSql, apellidoSql } from '../common/nombres';
+import { normalizarRtn } from '../common/formatos';
 
 /** Tasa general de ISV en Honduras. */
 const ISV_15 = 0.15;
 
-/** CAI de prueba. En producción lo asigna el SAR por rango de facturación. */
-const CAI_POR_DEFECTO = 'A1B2C3-D4E5F6-G7H8I9-J1K2L3-M4N5O6-P7';
+/** A partir de este monto, el RTN del cliente es obligatorio en la factura. */
+const MONTO_EXIGE_RTN = 10000;
 
 export type PeriodoReporte = 'DIA' | 'SEMANA' | 'MES';
 
 /**
  * Módulo de facturación.
  *
- * Las tablas "Factura" y "DetalleFactura" ya existían en el esquema con los
- * campos fiscales hondureños (cai, numeroFactura, isv15, isv18,
- * importeExonerado, importeExento), pero no había ningún controlador que las
- * expusiera. Esto implementa lo que el Manual de Usuario describe:
- * generar factura, imprimirla, historial y reportes de ingresos.
+ * Cambios desde las migraciones 004 y 005:
+ *
+ *   - El CAI ya NO es una columna de "Factura": era el mismo texto repetido
+ *     en cada fila. Ahora vive en "RangoFacturacion" junto con el rango de
+ *     correlativos autorizado y la fecha limite de emision.
+ *   - Los datos del negocio (razon social, RTN, direccion) estan en "Emisor",
+ *     que cuelga del rango.
+ *   - "Factura" guarda las BASES gravadas ("importeGravado15" / 18), no solo
+ *     los impuestos, y el RTN del cliente copiado al momento de emitir.
+ *   - Una factura NO se borra: se anula (estado = ANULADA con motivo y fecha).
+ *     Un trigger de la base rechaza el DELETE.
+ *   - "DetalleFactura"."totalLinea" es una columna GENERADA: no se inserta.
+ *     "aplicaISV" (booleano) se reemplazo por "tasaISV", que si dice cuanto.
  *
  * Códigos de retorno (mismo criterio que el resto del proyecto):
  *   0 = ok | 4 = no encontrada | 5 = conflicto | 500 = error interno
@@ -42,32 +52,41 @@ export class FacturaService {
       `
       SELECT
         c.id                AS "citaId",
-        c.fecha,
-        c.hora,
+        to_char(c.fecha, 'YYYY-MM-DD') AS fecha,
+        to_char(c.hora,  'HH24:MI')    AS hora,
         p.id                AS "pacienteId",
-        (p.nombre || ' ' || p.apellido) AS "pacienteNombre",
+        p."nombreCompleto"  AS "pacienteNombre",
         p.dni               AS "pacienteDni",
+        p.rtn               AS "pacienteRtn",
         e.id                AS "doctorId",
-        (dp.nombre || ' ' || dp.apellido) AS "doctorNombre",
+        dp."nombreCompleto" AS "doctorNombre",
         s.id                AS "servicioId",
         s.nombre            AS "servicioNombre",
         s.precio
       FROM "Cita" c
-      JOIN "Persona" p        ON p.id = c."pacienteId"
-      JOIN "ServicioClinico" s ON s.id = c."servicioId"
-      LEFT JOIN "Empleado" e   ON e.id = c."doctorId"
+      JOIN "Paciente" pa       ON pa.id = c."pacienteId"
+      JOIN "Persona" p         ON p.id  = pa."personaId"
+      JOIN "ServicioClinico" s ON s.id  = c."servicioId"
+      LEFT JOIN "Empleado" e   ON e.id  = c."empleadoId"
       LEFT JOIN "Persona" dp   ON dp.id = e."personaId"
       LEFT JOIN "User" u       ON u."personaId" = p.id
+      -- Una factura ANULADA libera la cita: se puede volver a facturar.
       WHERE c.estado = 'COMPLETADA'
-        AND NOT EXISTS (SELECT 1 FROM "Factura" f WHERE f."citaId" = c.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM "Factura" f
+          WHERE f."citaId" = c.id
+            AND f.estado = 'EMITIDA'
+            AND f."tipoDocumento" = 'FACTURA'
+        )
         AND (
           $1 = ''
-          OR LOWER(COALESCE(u.correo, ''))  = $1
-          OR LOWER(COALESCE(p.dni, ''))     = $1
+          OR LOWER(COALESCE(u.correo, ''))   = $1
+          OR LOWER(COALESCE(p.dni, ''))      = $1
+          OR LOWER(COALESCE(p.rtn, ''))      = $1
           OR LOWER(COALESCE(p.telefono, '')) = $1
-          OR LOWER(p.nombre || ' ' || p.apellido) LIKE '%' || $1 || '%'
+          OR LOWER(p."nombreCompleto") LIKE '%' || $1 || '%'
         )
-      ORDER BY c.fecha DESC, c.id DESC
+      ORDER BY c."fechaHora" DESC, c.id DESC
       `,
       [filtro],
     );
@@ -78,13 +97,58 @@ export class FacturaService {
   //  Emitir factura
   // =====================================================================
 
-  /** Genera el siguiente correlativo: 000-001-01-00000001 */
-  private async siguienteNumero(client: PoolClient): Promise<string> {
-    const { rows } = await this.db.pool.query(
-      `SELECT COALESCE(MAX(id), 0) + 1 AS siguiente FROM "Factura"`,
+  /**
+   * Rango de facturacion vigente: el CAI autorizado por el SAR, con su rango
+   * de correlativos y su fecha limite.
+   *
+   * Si no hay ninguno activo no se puede facturar: emitir sin CAI vigente es
+   * justamente lo que la normativa prohibe.
+   */
+  private async rangoVigente(client: PoolClient) {
+    const { rows } = await client.query(
+      `
+      SELECT r.id, r.cai, r."numeroInicial", r."numeroFinal",
+             r."fechaLimiteEmision"
+      FROM "RangoFacturacion" r
+      WHERE r.activo = true
+        AND r."fechaLimiteEmision" >= CURRENT_DATE
+      ORDER BY r.id DESC
+      LIMIT 1
+      `,
     );
-    const n = Number(rows[0]?.siguiente ?? 1);
-    return `000-001-01-${String(n).padStart(8, '0')}`;
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Siguiente correlativo DENTRO del rango autorizado.
+   *
+   * Antes se calculaba con MAX(id) + 1 de "Factura", lo cual no tiene nada que
+   * ver con el correlativo: si se borraba una factura o se emitia una nota, el
+   * numero se saltaba. Ahora se toma el ultimo numero emitido de ese rango y
+   * se le suma uno, respetando el prefijo autorizado.
+   */
+  private async siguienteNumero(
+    client: PoolClient,
+    rango: { id: number; numeroInicial: string; numeroFinal: string },
+  ): Promise<string | null> {
+    const { rows } = await client.query(
+      `SELECT MAX("numeroFactura") AS ultimo FROM "Factura" WHERE "rangoId" = $1`,
+      [rango.id],
+    );
+
+    const prefijo = rango.numeroInicial.slice(0, 10); // '000-001-01'
+    const ultimo: string | null = rows[0]?.ultimo ?? null;
+
+    const siguiente = ultimo
+      ? Number(ultimo.slice(-8)) + 1
+      : Number(rango.numeroInicial.slice(-8));
+
+    const numero = `${prefijo}-${String(siguiente).padStart(8, '0')}`;
+
+    // Si se acabo el rango hay que pedirle otro CAI al SAR.
+    if (numero > rango.numeroFinal) return null;
+
+    return numero;
   }
 
   async emitir(dto: CreateFacturaDto) {
@@ -92,13 +156,16 @@ export class FacturaService {
     try {
       await client.query('BEGIN');
 
-      // 1. La cita debe existir, estar COMPLETADA y no tener factura
+      // 1. La cita debe existir, estar COMPLETADA y no tener factura vigente
       const { rows: citaRows } = await client.query(
         `
-        SELECT c.id, c."pacienteId", c."doctorId", c."servicioId",
-               s.nombre AS "servicioNombre", s.precio, c.estado
+        SELECT c.id, c."pacienteId", c."empleadoId", c."servicioId",
+               s.nombre AS "servicioNombre", s.precio, c.estado,
+               p.rtn AS "rtnPaciente", p."nombreCompleto" AS "nombrePaciente"
         FROM "Cita" c
         JOIN "ServicioClinico" s ON s.id = c."servicioId"
+        JOIN "Paciente" pa       ON pa.id = c."pacienteId"
+        JOIN "Persona"  p        ON p.id  = pa."personaId"
         WHERE c.id = $1
         `,
         [dto.citaId],
@@ -118,7 +185,8 @@ export class FacturaService {
       }
 
       const { rows: yaFacturada } = await client.query(
-        `SELECT id FROM "Factura" WHERE "citaId" = $1`,
+        `SELECT id FROM "Factura"
+         WHERE "citaId" = $1 AND estado = 'EMITIDA' AND "tipoDocumento" = 'FACTURA'`,
         [dto.citaId],
       );
       if (yaFacturada.length > 0) {
@@ -126,51 +194,114 @@ export class FacturaService {
         return { message: 'Esta cita ya fue facturada', code: 5 };
       }
 
-      // 2. Totales
+      // 2. Totales. "importeGravado15" es la BASE sobre la que se calcula el
+      //    ISV: sin ella el pie de la factura no se puede reconstruir.
       const subtotal = Number(cita.precio) || 0;
       const descuentos = Math.min(Number(dto.descuentos) || 0, subtotal);
-      const base = Math.max(subtotal - descuentos, 0);
-      const isv15 = Number((base * ISV_15).toFixed(2));
-      const totalPagar = Number((base + isv15).toFixed(2));
+      const importeGravado15 = Number(Math.max(subtotal - descuentos, 0).toFixed(2));
+      const isv15 = Number((importeGravado15 * ISV_15).toFixed(2));
+      const totalPagar = Number((importeGravado15 + isv15).toFixed(2));
 
-      // 3. Cabecera
-      const numeroFactura = await this.siguienteNumero(client);
+      /*
+       * 3. RTN del cliente (punto 6.2).
+       *
+       * Se toma el que mande el formulario y, si no viene, el que la persona
+       * tenga registrado. Se COPIA a la factura: una factura es un documento
+       * legal y tiene que seguir diciendo lo que decia el dia que se emitio,
+       * aunque la persona cambie su RTN despues.
+       */
+      const rtnCliente = normalizarRtn(dto.rtnCliente) ?? cita.rtnPaciente ?? null;
+
+      if (totalPagar > MONTO_EXIGE_RTN && !rtnCliente) {
+        await client.query('ROLLBACK');
+        return {
+          message:
+            `El RTN del cliente es obligatorio para facturas mayores a L.${MONTO_EXIGE_RTN}. ` +
+            `Registrá el RTN de ${cita.nombrePaciente} o escribilo en el formulario.`,
+          code: 5,
+        };
+      }
+
+      // Si el paciente todavia no tenia RTN guardado, se le guarda.
+      if (rtnCliente && !cita.rtnPaciente) {
+        await client.query(
+          `UPDATE "Persona" SET rtn = $1
+           WHERE id = (SELECT "personaId" FROM "Paciente" WHERE id = $2)`,
+          [rtnCliente, cita.pacienteId],
+        );
+      }
+
+      // 4. Rango autorizado y correlativo
+      const rango = await this.rangoVigente(client);
+      if (!rango) {
+        await client.query('ROLLBACK');
+        return {
+          message:
+            'No hay un rango de facturacion vigente. Hay que registrar el CAI autorizado por el SAR antes de poder facturar.',
+          code: 5,
+        };
+      }
+
+      const numeroFactura = await this.siguienteNumero(client, rango);
+      if (!numeroFactura) {
+        await client.query('ROLLBACK');
+        return {
+          message: `Se agoto el rango autorizado (hasta ${rango.numeroFinal}). Hay que solicitar un CAI nuevo.`,
+          code: 5,
+        };
+      }
+
+      // 5. Cabecera. El CAI ya no va aca: viene del rango.
       const { rows: facturaRows } = await client.query(
         `
         INSERT INTO "Factura"
-          ("numeroFactura", cai, "fechaEmision", "pacienteId", "doctorId",
-           subtotal, descuentos, "importeExonerado", "importeExento",
-           "isv15", "isv18", "totalPagar", "citaId", "updatedAt")
-        VALUES ($1, $2, CURRENT_TIMESTAMP, $3, $4, $5, $6, 0, 0, $7, 0, $8, $9, CURRENT_TIMESTAMP)
+          ("numeroFactura", "rangoId", "fechaEmision", "pacienteId", "rtnCliente",
+           "empleadoId", "citaId", subtotal, descuentos,
+           "importeGravado15", "importeGravado18",
+           "importeExonerado", "importeExento",
+           isv15, isv18, "totalPagar")
+        VALUES ($1, $2, CURRENT_TIMESTAMP, $3, $4, $5, $6, $7, $8, $9, 0, 0, 0, $10, 0, $11)
         RETURNING *
         `,
         [
           numeroFactura,
-          CAI_POR_DEFECTO,
+          rango.id,
           cita.pacienteId,
-          cita.doctorId,
+          rtnCliente,
+          cita.empleadoId,
+          cita.id,
           subtotal,
           descuentos,
+          importeGravado15,
           isv15,
           totalPagar,
-          cita.id,
         ],
       );
       const factura = facturaRows[0];
 
-      // 4. Detalle (una línea por el servicio de la cita)
+      /*
+       * 6. Detalle (una línea por el servicio de la cita).
+       *
+       * "totalLinea" NO se inserta: es una columna generada (cantidad *
+       * precioUnitario) y mandarla da error. "aplicaISV" se reemplazo por
+       * "tasaISV", que ademas dice QUE tasa se aplico.
+       */
       await client.query(
         `
         INSERT INTO "DetalleFactura"
           ("facturaId", "servicioId", descripcion, cantidad,
-           "precioUnitario", "totalLinea", "aplicaISV", "updatedAt")
-        VALUES ($1, $2, $3, 1, $4, $5, true, CURRENT_TIMESTAMP)
+           "precioUnitario", "tasaISV")
+        VALUES ($1, $2, $3, 1, $4, $5)
         `,
-        [factura.id, cita.servicioId, cita.servicioNombre, subtotal, subtotal],
+        [factura.id, cita.servicioId, cita.servicioNombre, subtotal, ISV_15],
       );
 
       await client.query('COMMIT');
-      return { message: 'Factura emitida correctamente', code: 0, data: factura };
+      return {
+        message: 'Factura emitida correctamente',
+        code: 0,
+        data: { ...factura, cai: rango.cai },
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       return {
@@ -182,24 +313,92 @@ export class FacturaService {
     }
   }
 
+  /**
+   * Anular una factura (punto 6.2).
+   *
+   * No se borra: se conserva con estado ANULADA, motivo y fecha, porque el
+   * correlativo tiene que poder rendirse ante el SAR. La base rechaza el
+   * DELETE con un trigger.
+   *
+   * Al anularla, su cita vuelve a quedar facturable.
+   */
+  async anular(id: number, motivo: string) {
+    const motivoLimpio = (motivo ?? '').trim();
+    if (motivoLimpio === '') {
+      return { message: 'Hay que indicar el motivo de la anulacion', code: 5 };
+    }
+
+    try {
+      const { rows } = await this.db.pool.query(
+        `
+        UPDATE "Factura"
+        SET estado = 'ANULADA',
+            "motivoAnulacion" = $2,
+            "fechaAnulacion"  = CURRENT_TIMESTAMP
+        WHERE id = $1 AND estado = 'EMITIDA'
+        RETURNING id, "numeroFactura", estado, "motivoAnulacion", "fechaAnulacion"
+        `,
+        [id, motivoLimpio],
+      );
+
+      if (rows.length === 0) {
+        const existe = await this.db.pool.query(
+          `SELECT estado FROM "Factura" WHERE id = $1`,
+          [id],
+        );
+        if (existe.rows.length === 0) {
+          return { message: 'Factura no encontrada', code: 4 };
+        }
+        return { message: 'Esa factura ya estaba anulada', code: 5 };
+      }
+
+      return { message: 'Factura anulada', code: 0, data: rows[0] };
+    } catch (error) {
+      return {
+        message: `No se pudo anular la factura: ${(error as Error).message}`,
+        code: 500,
+      };
+    }
+  }
+
   // =====================================================================
   //  Consultas
   // =====================================================================
 
-  /** SELECT reutilizable con los datos del paciente y del doctor. */
+  /**
+   * SELECT reutilizable con los datos fiscales completos.
+   *
+   * El CAI, el rango y los datos del emisor (razon social, RTN, direccion)
+   * vienen de "RangoFacturacion" -> "Emisor". Son obligatorios en la factura
+   * impresa segun el regimen de facturacion vigente.
+   */
   private readonly SELECT_FACTURA = `
     SELECT
       f.*,
-      (p.nombre || ' ' || p.apellido) AS "pacienteNombre",
-      p.dni       AS "pacienteDni",
-      p.telefono  AS "pacienteTelefono",
-      u.correo    AS "pacienteCorreo",
-      CASE WHEN dp.id IS NULL THEN NULL
-           ELSE (dp.nombre || ' ' || dp.apellido) END AS "doctorNombre"
+      r.cai,
+      r."numeroInicial"    AS "rangoDesde",
+      r."numeroFinal"      AS "rangoHasta",
+      r."fechaLimiteEmision",
+      em."razonSocial"     AS "emisorRazonSocial",
+      em."nombreComercial" AS "emisorNombreComercial",
+      em.rtn               AS "emisorRtn",
+      em.direccion         AS "emisorDireccion",
+      em.telefono          AS "emisorTelefono",
+      p.id                 AS "pacientePersonaId",
+      p."nombreCompleto"   AS "pacienteNombre",
+      p.dni                AS "pacienteDni",
+      COALESCE(f."rtnCliente", p.rtn) AS "pacienteRtn",
+      p.telefono           AS "pacienteTelefono",
+      u.correo             AS "pacienteCorreo",
+      f."empleadoId"       AS "doctorId",
+      dp."nombreCompleto"  AS "doctorNombre"
     FROM "Factura" f
-    JOIN "Persona" p       ON p.id = f."pacienteId"
+    JOIN "RangoFacturacion" r  ON r.id  = f."rangoId"
+    JOIN "Emisor"           em ON em.id = r."emisorId"
+    JOIN "Paciente" pa     ON pa.id = f."pacienteId"
+    JOIN "Persona"  p      ON p.id  = pa."personaId"
     LEFT JOIN "User" u     ON u."personaId" = p.id
-    LEFT JOIN "Empleado" e ON e.id = f."doctorId"
+    LEFT JOIN "Empleado" e ON e.id = f."empleadoId"
     LEFT JOIN "Persona" dp ON dp.id = e."personaId"
   `;
 
@@ -214,7 +413,9 @@ export class FacturaService {
 
     const { rows: detalle } = await this.db.pool.query(
       `SELECT id, "facturaId", "servicioId", descripcion, cantidad,
-              "precioUnitario", "totalLinea", "aplicaISV"
+              "precioUnitario", "totalLinea", "tasaISV",
+              -- Se mantiene "aplicaISV" para las pantallas viejas
+              ("tasaISV" > 0) AS "aplicaISV"
        FROM "DetalleFactura" WHERE "facturaId" = $1 ORDER BY id`,
       [id],
     );
@@ -232,8 +433,9 @@ export class FacturaService {
       WHERE (
               $1 = ''
               OR LOWER(f."numeroFactura") LIKE '%' || $1 || '%'
-              OR LOWER(p.nombre || ' ' || p.apellido) LIKE '%' || $1 || '%'
+              OR LOWER(p."nombreCompleto") LIKE '%' || $1 || '%'
               OR LOWER(COALESCE(p.dni, '')) LIKE '%' || $1 || '%'
+              OR LOWER(COALESCE(f."rtnCliente", p.rtn, '')) LIKE '%' || $1 || '%'
             )
         AND ($2::date IS NULL OR f."fechaEmision"::date >= $2::date)
         AND ($3::date IS NULL OR f."fechaEmision"::date <= $3::date)
@@ -260,6 +462,8 @@ export class FacturaService {
         COUNT(*)::int                    AS "cantidadFacturas",
         COALESCE(SUM(f."totalPagar"), 0) AS total
       FROM "Factura" f
+      -- Las anuladas no son ingreso: no deben contar en los reportes.
+      WHERE f.estado = 'EMITIDA'
       GROUP BY 1
       ORDER BY 1 DESC
       LIMIT 12
@@ -295,15 +499,15 @@ export class FacturaService {
     const { rows: porDoctorRaw } = await this.db.pool.query(
       `
       SELECT
-        f."doctorId"                     AS "doctorId",
-        CASE WHEN dp.id IS NULL THEN 'Sin doctor asignado'
-             ELSE (dp.nombre || ' ' || dp.apellido) END AS "doctorNombre",
+        f."empleadoId"                   AS "doctorId",
+        COALESCE(dp."nombreCompleto", 'Sin doctor asignado') AS "doctorNombre",
         COUNT(*)::int                    AS "cantidadFacturas",
         COALESCE(SUM(f."totalPagar"), 0) AS total
       FROM "Factura" f
-      LEFT JOIN "Empleado" e ON e.id = f."doctorId"
+      LEFT JOIN "Empleado" e ON e.id = f."empleadoId"
       LEFT JOIN "Persona" dp ON dp.id = e."personaId"
-      GROUP BY f."doctorId", dp.id, dp.nombre, dp.apellido
+      WHERE f.estado = 'EMITIDA'
+      GROUP BY f."empleadoId", dp.id, dp."nombreCompleto"
       ORDER BY total DESC
       `,
     );
@@ -318,7 +522,8 @@ export class FacturaService {
     const { rows: totales } = await this.db.pool.query(
       `SELECT COUNT(*)::int AS "totalFacturas",
               COALESCE(SUM("totalPagar"), 0) AS "totalGeneral"
-       FROM "Factura"`,
+       FROM "Factura"
+       WHERE estado = 'EMITIDA'`,
     );
 
     return {

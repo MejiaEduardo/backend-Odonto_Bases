@@ -5,21 +5,36 @@ import * as bcrypt from 'bcrypt';
 import { DatabaseService } from '../database/datebaseService.service';
 import { AuthPayloadDto } from './dto/auth.dto';
 import { SignupDto } from './dto/signup.dto';
+import { normalizarNombre, personaJson } from '../common/nombres';
+import { buscarPacienteDesdePersona } from '../common/pacientes';
+import {
+  normalizarDni,
+  normalizarRtn,
+  normalizarTelefono,
+  textoOpcional,
+} from '../common/formatos';
 
 /**
- * Conversión de Prisma a SQL puro (pg) usando el schema real de base.sql.
- * Tablas relevantes (comillas dobles obligatorias por PascalCase/camelCase):
+ * SQL puro (pg) sobre el esquema de las migraciones 003, 004 y 005.
  *
- *   "Persona"(id, nombre, apellido, dni, telefono, direccion, "fechaNac", "createdAt", "updatedAt")
- *   "User"(id, correo, password, rol, activo, verificado, "personaId",
- *          "createdAt", "updatedAt", "passwordTemporalExpira",
- *          "requierCambioPassword", "passwordTemporal")
- *   "Empleado"(id, "personaId", puesto, salario, "fechaIngreso", activo)
- *   "Expediente"(id, "pacienteId" [unique], alergias, enfermedades, medicamentos, observaciones, activo, "createdAt", "updatedAt")
- *   "Logs"(id, "empleadoId", login, logout)
+ *   "Persona"(id, "primerNombre", "segundoNombre", "primerApellido",
+ *             "segundoApellido", "nombreCompleto" [generada], dni, rtn,
+ *             telefono, direccion, "fechaNac", ...)
+ *   "User"(id, correo, password, "rolId", activo, verificado, "personaId", ...)
+ *   "Paciente"(id, "personaId" [unico], "fechaRegistro", activo, ...)
+ *   "Empleado"(id, "personaId", "puestoId", salario, "fechaIngreso", activo, ...)
+ *   "Expediente"(id, "pacienteId" [unico, apunta a "Paciente"], ...)
+ *   "Logs"(id, "empleadoId", login, logout, ...)
  *
- * "updatedAt" no tiene default -> se asigna a mano con CURRENT_TIMESTAMP.
+ * El rol ya no es un ENUM sino la tabla "Rol". La vista "vw_Usuario" lo
+ * devuelve resuelto como texto, igual que antes, para no rehacer el JOIN en
+ * cada consulta.
+ *
+ * "updatedAt" lo mantiene un trigger de la base: no hay que asignarlo a mano.
  */
+
+/** rolId 4 = CLIENTE. Es el rol con el que se registra un paciente. */
+const ROL_CLIENTE = 4;
 
 const loginAttempts = new Map<string, { count: number; lastAttempt: number }>();
 
@@ -98,22 +113,20 @@ export class AuthService {
         };
       }
 
-      // Buscar el usuario por correo (con datos de Persona incluidos vía JOIN)
+      // Buscar el usuario por correo (con datos de Persona incluidos vía JOIN).
+      // El correo se compara sin distinguir mayusculas, igual que el indice
+      // unico de la base.
       const userResult = await this.db.pool.query(
         `
         SELECT
-          u.*,
-          json_build_object(
-            'id', p.id,
-            'nombre', p.nombre,
-            'apellido', p.apellido,
-            'dni', p.dni,
-            'telefono', p.telefono,
-            'direccion', p.direccion
-          ) AS persona
+          u.id, u.correo, u.password, u."rolId", u.activo, u.verificado,
+          u."personaId", u."createdAt", u."updatedAt",
+          r.nombre AS rol,
+          ${personaJson('p')} AS persona
         FROM "User" u
+        JOIN "Rol"     r ON r.id = u."rolId"
         JOIN "Persona" p ON p.id = u."personaId"
-        WHERE u.correo = $1
+        WHERE LOWER(u.correo) = LOWER($1)
         LIMIT 1
         `,
         [correo],
@@ -127,24 +140,24 @@ export class AuthService {
 
       const findUser = userResult.rows[0];
 
+      /*
+       * Antes habia aca un segundo camino de login contra un campo
+       * "passwordTemporal" de "User". Esas tres columnas
+       * (passwordTemporal, passwordTemporalExpira, requierCambioPassword)
+       * no existen en la base, asi que el bloque nunca hacia nada.
+       *
+       * El ingeniero pidio justamente que la temporalidad NO viva en "User":
+       * para eso esta la tabla "TokenAcceso", que guarda un link con su fecha
+       * de expiracion. Queda pendiente conectar ese flujo.
+       */
       let passwordMatch = false;
-      let esPasswordTemporal = false;
 
       if (!isSocial) {
         if (findUser.password) {
           passwordMatch = await bcrypt.compare(password, findUser.password);
         }
 
-        if (findUser.passwordTemporal) {
-          console.log('Password recibido:', `"${password}"`);
-          console.log('Hash temporal:', findUser.passwordTemporal);
-          esPasswordTemporal = await bcrypt.compare(
-            password,
-            findUser.passwordTemporal,
-          );
-        }
-
-        if (!passwordMatch && !esPasswordTemporal) {
+        if (!passwordMatch) {
           attempt.count++;
           attempt.lastAttempt = now;
           return { message: 'Credenciales Invalidas', code: 13 };
@@ -152,19 +165,6 @@ export class AuthService {
       }
 
       loginAttempts.set(correo, { count: 0, lastAttempt: 0 });
-
-      if (esPasswordTemporal) {
-        if (
-          findUser.passwordTemporalExpira &&
-          new Date(findUser.passwordTemporalExpira) < new Date()
-        ) {
-          return {
-            message:
-              'La contraseña temporal ha expirado. Contacte al administrador.',
-            code: 25,
-          };
-        }
-      }
 
       // Verificar si es un empleado
       const empleadoResult = await this.db.pool.query(
@@ -174,7 +174,7 @@ export class AuthService {
       const empleado = empleadoResult.rows[0] ?? null;
 
       // Quitar el password del objeto antes de devolverlo
-      const { password: _pw, passwordTemporal: _pt, ...user } = findUser;
+      const { password: _pw, ...user } = findUser;
 
       if (empleado) {
         user.empleadoId = empleado.id;
@@ -186,6 +186,12 @@ export class AuthService {
           [empleado.id],
         );
       }
+
+      // Si ademas es paciente, se manda su id de "Paciente".
+      user.pacienteId = await buscarPacienteDesdePersona(
+        this.db.pool,
+        findUser.personaId,
+      );
 
       const token = this.jwtService.sign({
         id: user.id,
@@ -201,24 +207,30 @@ export class AuthService {
   }
 
   async signupUser(signupDto: SignupDto, isSocial = false): Promise<SignupResult> {
-    const {
-      nombre,
-      apellido,
-      dni,
-      telefono,
-      direccion,
-      fechaNac,
-      correo,
-      password,
-    } = signupDto;
+    const { dni, rtn, telefono, direccion, fechaNac, correo, password } =
+      signupDto;
+
+    /*
+     * Los cuatro campos de nombre. El segundo nombre y el segundo apellido
+     * son opcionales; si el cliente todavia manda `nombre` y `apellido`
+     * (por ejemplo el alta con Google), se parten aca.
+     */
+    const partes = normalizarNombre(signupDto);
+
+    if (!partes.primerNombre || !partes.primerApellido) {
+      return {
+        message: 'El primer nombre y el primer apellido son obligatorios',
+        code: 13,
+      };
+    }
 
     const client: PoolClient = await this.db.pool.connect();
     try {
       await client.query('BEGIN');
 
-      // Validar correo
+      // Validar correo (sin distinguir mayusculas, igual que el indice unico)
       const emailExists = await client.query(
-        `SELECT id FROM "User" WHERE correo = $1 LIMIT 1`,
+        `SELECT id FROM "User" WHERE LOWER(correo) = LOWER($1) LIMIT 1`,
         [correo],
       );
       if (emailExists.rows.length > 0) {
@@ -248,11 +260,13 @@ export class AuthService {
        * '0801-1990-00123' son la misma identidad, y guardados tal cual
        * el indice unico los trataria como distintos.
        */
-      const dniLimpio = dni?.trim() || null;
+      // La base exige 13 digitos sin guiones, asi que se limpian aca en vez de
+      // dejar que el CHECK devuelva un error incomprensible.
+      const dniLimpio = normalizarDni(dni);
 
       if (dniLimpio) {
         const dniExists = await client.query(
-          `SELECT id FROM "Persona" WHERE TRIM(dni) = $1 LIMIT 1`,
+          `SELECT id FROM "Persona" WHERE dni = $1 LIMIT 1`,
           [dniLimpio],
         );
         if (dniExists.rows.length > 0) {
@@ -261,44 +275,63 @@ export class AuthService {
         }
       }
 
-      // Crear persona
+      // Crear persona con los cuatro campos de nombre
       const personaInsert = await client.query(
         `
-        INSERT INTO "Persona" (nombre, apellido, dni, telefono, direccion, "fechaNac", "updatedAt")
-        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+        INSERT INTO "Persona"
+          ("primerNombre", "segundoNombre", "primerApellido", "segundoApellido",
+           dni, rtn, telefono, direccion, "fechaNac")
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *
         `,
         [
-          nombre?.trim(),
-          apellido?.trim(),
+          partes.primerNombre,
+          partes.segundoNombre,
+          partes.primerApellido,
+          partes.segundoApellido,
           dniLimpio,
-          telefono?.trim() || null,
-          direccion?.trim() || null,
+          normalizarRtn(rtn),
+          normalizarTelefono(telefono),
+          textoOpcional(direccion),
           fechaNac ? new Date(fechaNac) : null,
         ],
       );
       const newPersona = personaInsert.rows[0];
 
-      // Crear usuario
+      // Crear usuario. El rol ya no es un ENUM: es "rolId" contra la tabla "Rol".
       const userInsert = await client.query(
         `
-        INSERT INTO "User" (correo, password, "personaId", "updatedAt")
-        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
-        RETURNING *
+        INSERT INTO "User" (correo, password, "rolId", "personaId")
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, correo, "rolId", activo, verificado, "personaId",
+                  "createdAt", "updatedAt"
         `,
-        [correo, hashedPassword || '', newPersona.id],
+        [correo, hashedPassword || '', ROL_CLIENTE, newPersona.id],
       );
       const newUser = userInsert.rows[0];
 
-      // Crear expediente
+      /*
+       * Registrar a la persona como PACIENTE.
+       *
+       * Desde la migracion 005 "Cita", "Factura" y "Expediente" apuntan a
+       * "Paciente", no a "Persona". Sin esta fila el usuario podria entrar
+       * pero no podria agendar ninguna cita.
+       */
+      const pacienteInsert = await client.query(
+        `INSERT INTO "Paciente" ("personaId") VALUES ($1) RETURNING id`,
+        [newPersona.id],
+      );
+      const pacienteId = pacienteInsert.rows[0].id;
+
+      // Crear expediente, ya apuntando al Paciente
       const expedienteInsert = await client.query(
         `
         INSERT INTO "Expediente"
-          ("pacienteId", alergias, enfermedades, medicamentos, observaciones, activo, "updatedAt")
-        VALUES ($1, NULL, NULL, NULL, NULL, true, CURRENT_TIMESTAMP)
+          ("pacienteId", alergias, enfermedades, medicamentos, observaciones, activo)
+        VALUES ($1, NULL, NULL, NULL, NULL, true)
         RETURNING *
         `,
-        [newPersona.id],
+        [pacienteId],
       );
       const newExpediente = expedienteInsert.rows[0];
 
@@ -307,7 +340,7 @@ export class AuthService {
       return {
         message: 'Usuario registrado con éxito',
         code: 10,
-        user: newUser,
+        user: { ...newUser, rol: 'CLIENTE', pacienteId },
         expediente: newExpediente,
       };
     } catch (error) {
@@ -350,18 +383,14 @@ export class AuthService {
       const { rows } = await this.db.pool.query(
         `
         SELECT
-          u.*,
-          json_build_object(
-            'id', p.id,
-            'nombre', p.nombre,
-            'apellido', p.apellido,
-            'dni', p.dni,
-            'telefono', p.telefono,
-            'direccion', p.direccion
-          ) AS persona
+          u.id, u.correo, u."rolId", u.activo, u.verificado, u."personaId",
+          u."createdAt", u."updatedAt",
+          r.nombre AS rol,
+          ${personaJson('p')} AS persona
         FROM "User" u
+        JOIN "Rol"     r ON r.id = u."rolId"
         JOIN "Persona" p ON p.id = u."personaId"
-        WHERE u.correo = $1
+        WHERE LOWER(u.correo) = LOWER($1)
         LIMIT 1
         `,
         [correo],
@@ -372,8 +401,6 @@ export class AuthService {
       }
 
       const user = rows[0];
-      delete user.password;
-      delete user.passwordTemporal;
 
       /*
        * Mismo agregado que hace validateUser. Sin esto, quien entre por
@@ -388,6 +415,11 @@ export class AuthService {
       if (empleado.rows[0]) {
         user.empleadoId = empleado.rows[0].id;
       }
+
+      user.pacienteId = await buscarPacienteDesdePersona(
+        this.db.pool,
+        user.personaId,
+      );
 
       return { message: 'Perfil obtenido', code: 0, token: '', user };
     } catch (error) {

@@ -72,6 +72,8 @@ describe('ExpedienteService', () => {
           rows: [
             {
               id: 1,
+              personaId: 8,
+              nombreCompleto: 'Juan Perez',
               nombre: 'Juan',
               apellido: 'Perez',
               alergias: 'Ninguna',
@@ -83,7 +85,7 @@ describe('ExpedienteService', () => {
           ],
         }) // expediente
         .mockResolvedValueOnce({ rows: [{ id: 7, motivo: 'Consulta' }] }) // detalles
-        .mockResolvedValueOnce({ rows: [{ nombre: 'Dr.', apellido: 'Smith' }] }) // doctores
+        .mockResolvedValueOnce({ rows: [{ nombreCompleto: 'Dr. Smith' }] }) // doctores
         .mockResolvedValueOnce({
           rows: [{ id: 1, nombreArchivo: 'file.pdf', tipoArchivo: 'pdf' }],
         }); // archivos
@@ -101,7 +103,7 @@ describe('ExpedienteService', () => {
       mockQuery
         .mockResolvedValueOnce({
           rowCount: 1,
-          rows: [{ id: 1, nombre: 'Juan', apellido: 'Perez' }],
+          rows: [{ id: 1, personaId: 8, nombreCompleto: 'Juan Perez' }],
         })
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
@@ -149,10 +151,10 @@ describe('ExpedienteService', () => {
         // findOne al final
         .mockResolvedValueOnce({
           rowCount: 1,
-          rows: [{ id: 1, nombre: 'Juan', apellido: 'Perez' }],
+          rows: [{ id: 1, personaId: 8, nombreCompleto: 'Juan Perez' }],
         })
         .mockResolvedValueOnce({ rows: [] }) // detalles
-        .mockResolvedValueOnce({ rows: [{ nombre: 'Dr.', apellido: 'Smith' }] }) // doctores
+        .mockResolvedValueOnce({ rows: [{ nombreCompleto: 'Dr. Smith' }] }) // doctores
         .mockResolvedValueOnce({ rows: [] }); // archivos
 
       // transaccion (client.query)
@@ -171,7 +173,10 @@ describe('ExpedienteService', () => {
     });
 
     it('debe lanzar NotFoundException si el paciente no existe', async () => {
-      mockQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      // idPacienteDesdePersona: 1) no es paciente, 2) tampoco existe la persona
+      mockQuery
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
 
       await expect(service.create(createDto)).rejects.toThrow(
         'No se encontro la persona con ID 1',
@@ -180,7 +185,7 @@ describe('ExpedienteService', () => {
 
     it('debe lanzar BadRequestException si el expediente ya existe', async () => {
       mockQuery
-        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 1 }] }) // persona existe
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 1 }] }) // ya es paciente
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 5 }] }); // expediente ya existe
 
       await expect(service.create(createDto)).rejects.toThrow(

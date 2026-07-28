@@ -8,6 +8,13 @@ import { DatabaseModule } from '../database/database.module';;
 import { UpdateModificarInfoDto } from './dtoModificar/update.modificarInfo';
 import * as bcrypt from 'bcrypt';
 import { DatabaseService } from '../database/datebaseService.service';
+import { personaJson, normalizarNombreParcial } from '../common/nombres';
+import {
+  normalizarDni,
+  normalizarRtn,
+  normalizarTelefono,
+  textoOpcional,
+} from '../common/formatos';
 
 type SearchCriterion = {
   correo?: string;
@@ -43,19 +50,13 @@ export class ModificarInfoService {
       u.id            AS "userId",
       u.correo,
       u.password      AS contrasena,
-      u.rol,
+      r.nombre        AS rol,
+      u."rolId",
       u.activo,
       u."personaId",
-      json_build_object(
-        'id',        p.id,
-        'nombre',    p.nombre,
-        'apellido',  p.apellido,
-        'dni',       p.dni,
-        'telefono',  p.telefono,
-        'direccion', p.direccion,
-        'fechaNac',  p."fechaNac"
-      ) AS persona
+      ${personaJson('p')} AS persona
     FROM "User" u
+    JOIN "Rol"     r ON r.id = u."rolId"
     JOIN "Persona" p ON p.id = u."personaId"
   `;
 
@@ -126,88 +127,111 @@ export class ModificarInfoService {
     return this.validateAndReturnClient({ telefono }, telefono);
   }
 
-    async completarDatosPorCorreo(correo: string, data: UpdateModificarInfoDto) {
-
-  // 1️ Buscar persona por correo
-  const result = await this.db.pool.query(
-    'SELECT u.*, p.* FROM "User" u JOIN "Persona" p ON u."personaId" = p.id WHERE u."correo" = $1',
-    [correo]
-  );
-  const user = result.rows[0];
-
-  if (!user) {
-      throw new BadRequestException("Usuario no encontrado.");
-  }
-
-  if (!user) {
-    throw new BadRequestException("Usuario no encontrado.");
-  }
-
-  // 2️ Filtrar campos válidos (solo los que vienen con valor)
-  const camposValidos = Object.fromEntries(
-    Object.entries(data).filter(
-      ([_, value]) => value !== null && value !== '' && value !== undefined,
-    ),
-  );
-
-  if (Object.keys(camposValidos).length === 0) {
-    throw new BadRequestException('No se enviaron datos para actualizar.');
-  }
-
-  // 3️ Validar teléfono si viene
-  if (camposValidos.telefono) {
-    const telResult = await this.db.pool.query(
-        'SELECT id FROM "Persona" WHERE "telefono" = $1 AND id != $2',
-        [camposValidos.telefono, user.personaId] // o user.id dependiendo de cómo se llame la columna de la persona
+  /**
+   * Completa o corrige los datos de un cliente, buscandolo por su correo.
+   *
+   * Antes esto armaba el UPDATE con las claves del DTO tal cual llegaban, y
+   * las metia en el SQL como nombres de columna. Eso tenia dos problemas:
+   * dependia de que el nombre del campo coincidiera con el de la columna
+   * (ya no coincide: `nombre` son ahora cuatro columnas), y ponia en manos
+   * del cliente que columna se escribe. Ahora la lista es explicita.
+   */
+  async completarDatosPorCorreo(correo: string, data: UpdateModificarInfoDto) {
+    // 1. Buscar el usuario por correo
+    const result = await this.db.pool.query(
+      `SELECT u.id AS "userId", u."personaId"
+       FROM "User" u
+       WHERE LOWER(u.correo) = LOWER(TRIM($1))`,
+      [correo],
     );
-    
-    if (telResult.rows.length > 0) {
+    const user = result.rows[0];
+
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado.');
+    }
+
+    const telefono =
+      data.telefono !== undefined ? normalizarTelefono(data.telefono) : undefined;
+    const dni = data.dni !== undefined ? normalizarDni(data.dni) : undefined;
+    const rtn = data.rtn !== undefined ? normalizarRtn(data.rtn) : undefined;
+
+    // 2. Validar teléfono si viene
+    if (telefono) {
+      const telResult = await this.db.pool.query(
+        'SELECT id FROM "Persona" WHERE telefono = $1 AND id != $2',
+        [telefono, user.personaId],
+      );
+      if (telResult.rows.length > 0) {
         throw new BadRequestException('El teléfono ya está en uso por otro usuario.');
+      }
     }
-}
 
-  // 4️ Validar DNI si viene
-  if (camposValidos.dni) {
-    const dniResult = await this.db.pool.query(
-        'SELECT id FROM "Persona" WHERE "dni" = $1 AND id != $2',
-        [camposValidos.dni, user.personaId]
-    );
-    if (dniResult.rows.length > 0) {
+    // 3. Validar DNI si viene
+    if (dni) {
+      const dniResult = await this.db.pool.query(
+        'SELECT id FROM "Persona" WHERE dni = $1 AND id != $2',
+        [dni, user.personaId],
+      );
+      if (dniResult.rows.length > 0) {
         throw new BadRequestException('El DNI ya está en uso por otro usuario.');
+      }
     }
-}
 
-  // 5️ Manejar password por separado
-  let { password, ...restoDeCamposPersona } = camposValidos;
+    // 4. Validar RTN si viene
+    if (rtn) {
+      const rtnResult = await this.db.pool.query(
+        'SELECT id FROM "Persona" WHERE rtn = $1 AND id != $2',
+        [rtn, user.personaId],
+      );
+      if (rtnResult.rows.length > 0) {
+        throw new BadRequestException('El RTN ya está en uso por otro usuario.');
+      }
+    }
 
-  if (password) {
-    password = await bcrypt.hash(password, 10);
+    /*
+     * 5. Columnas de "Persona" que se pueden tocar desde aca. Lista cerrada:
+     * "nombreCompleto" no esta porque es una columna generada.
+     */
+    const camposPersona: Record<string, unknown> = {
+      ...normalizarNombreParcial(data),
+      dni,
+      rtn,
+      telefono,
+      direccion: data.direccion !== undefined ? textoOpcional(data.direccion) : undefined,
+      fechaNac: data.fechaNac,
+    };
+
+    const asignaciones: string[] = [];
+    const valores: unknown[] = [];
+
+    for (const [columna, valor] of Object.entries(camposPersona)) {
+      if (valor !== undefined) {
+        asignaciones.push(`"${columna}" = $${valores.length + 1}`);
+        valores.push(valor);
+      }
+    }
+
+    if (asignaciones.length === 0 && !data.password) {
+      throw new BadRequestException('No se enviaron datos para actualizar.');
+    }
+
+    if (asignaciones.length > 0) {
+      valores.push(user.personaId);
+      await this.db.pool.query(
+        `UPDATE "Persona" SET ${asignaciones.join(', ')} WHERE id = $${valores.length}`,
+        valores,
+      );
+    }
+
+    // 6. La contraseña va en "User", no en "Persona"
+    if (data.password) {
+      const hash = await bcrypt.hash(data.password, 10);
+      await this.db.pool.query('UPDATE "User" SET password = $1 WHERE id = $2', [
+        hash,
+        user.userId,
+      ]);
+    }
+
+    return { message: 'Datos del cliente completados correctamente.' };
   }
-
-  // 6️ Actualizar
-
-const camposPersonaKeys = Object.keys(restoDeCamposPersona);
-if (camposPersonaKeys.length > 0) {
-    // Construimos dinámicamente el update para Persona según lo que venga
-    const setValues = camposPersonaKeys.map((key, index) => `"${key}" = $${index + 1}`).join(', ');
-    const values = camposPersonaKeys.map(key => restoDeCamposPersona[key]);
-    values.push(user.personaId); // El último parámetro es el ID de la persona
-
-    await this.db.pool.query(
-        `UPDATE "Persona" SET ${setValues} WHERE id = $${values.length}`,
-        values
-    );
-}
-
-// 2. Actualizar la contraseña en la tabla User si viene en la petición
-if (password) {
-    await this.db.pool.query(
-        'UPDATE "User" SET "password" = $1 WHERE "correo" = $2',
-        [password, correo]
-    );
-}
-
-
-return { message: 'Datos del cliente completados correctamente.' };
-}
 }

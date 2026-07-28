@@ -48,8 +48,10 @@ describe('EmpleadoService', () => {
   // -------------------------------------------------------
   describe('createEmpleado', () => {
     const dto = {
-      nombre: 'Juan',
-      apellido: 'Perez',
+      primerNombre: 'Juan',
+      segundoNombre: 'Carlos',
+      primerApellido: 'Perez',
+      segundoApellido: 'Lopez',
       dni: '1234',
       telefono: '9999',
       direccion: 'Ciudad',
@@ -96,7 +98,9 @@ describe('EmpleadoService', () => {
         .mockResolvedValueOnce({ rows: [] }) // dni libre
         .mockResolvedValueOnce({ rows: [] }) // correo libre
         .mockResolvedValueOnce({ rows: [{ id: 10 }] }) // Persona
+        .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // id del Puesto (catalogo)
         .mockResolvedValueOnce({ rows: [{ id: 20 }] }) // Empleado
+        .mockResolvedValueOnce({ rows: [{ id: 2 }] }) // id del Rol (catalogo)
         .mockResolvedValueOnce({ rows: [{ id: 30 }] }) // User
         .mockResolvedValueOnce({}); // COMMIT
 
@@ -104,8 +108,10 @@ describe('EmpleadoService', () => {
 
       expect(result).toEqual({
         empleado: { id: 20 },
-        usuario: { id: 30 },
+        // El rol se devuelve como texto, aunque en la base sea "rolId"
+        usuario: { id: 30, rol: 'ADMIN' },
         newpersona: { id: 10 },
+        especialidadIds: [],
       });
 
       expect(bcrypt.hash).toHaveBeenCalledWith(dto.password, 10);
@@ -147,8 +153,8 @@ describe('EmpleadoService', () => {
   // -------------------------------------------------------
   describe('UpdateEmpleado', () => {
     const dtoUpdate = {
-      nombre: 'Nuevo',
-      apellido: 'Apellido',
+      primerNombre: 'Nuevo',
+      primerApellido: 'Apellido',
       dni: '5678',
       telefono: '1234',
       direccion: 'Nueva direccion',
@@ -192,16 +198,19 @@ describe('EmpleadoService', () => {
         .mockResolvedValueOnce({ rows: [{ personaId: 10 }] }) // empleado existe
         .mockResolvedValueOnce({ rows: [] }) // dni libre
         .mockResolvedValueOnce({ rows: [{ id: 10 }] }) // UPDATE Persona
+        .mockResolvedValueOnce({ rows: [{ id: 3 }] }) // id del Puesto (catalogo)
         .mockResolvedValueOnce({ rows: [{ id: 20 }] }) // UPDATE Empleado
         .mockResolvedValueOnce({ rows: [{ id: 5, password: 'old' }] }) // SELECT User
+        .mockResolvedValueOnce({ rows: [{ id: 3 }] }) // id del Rol (catalogo)
         .mockResolvedValueOnce({ rows: [{ id: 5 }] }) // UPDATE User
+        .mockResolvedValueOnce({ rows: [{ nombre: 'RECEPCIONISTA' }] }) // nombre del rol
         .mockResolvedValueOnce({}); // COMMIT
 
       const result = await service.UpdateEmpleado(10, dtoUpdate);
 
       expect(result.persona).toEqual({ id: 10 });
       expect(result.empleado).toEqual({ id: 20 });
-      expect(result.usuario).toEqual({ id: 5 });
+      expect(result.usuario).toEqual({ id: 5, rol: 'RECEPCIONISTA' });
 
       expect(bcrypt.hash).toHaveBeenCalledWith(dtoUpdate.password, 10);
     });
@@ -212,6 +221,7 @@ describe('EmpleadoService', () => {
         .mockResolvedValueOnce({ rows: [{ personaId: 10 }] }) // empleado existe
         .mockResolvedValueOnce({ rows: [{ id: 10, dni: dtoUpdate.dni }] }) // dni propio
         .mockResolvedValueOnce({ rows: [{ id: 10 }] }) // UPDATE Persona
+        .mockResolvedValueOnce({ rows: [{ id: 3 }] }) // id del Puesto (catalogo)
         .mockResolvedValueOnce({ rows: [{ id: 20 }] }) // UPDATE Empleado
         .mockResolvedValueOnce({ rows: [] }) // no hay User
         .mockResolvedValueOnce({}); // COMMIT
@@ -229,9 +239,12 @@ describe('EmpleadoService', () => {
         .mockResolvedValueOnce({ rows: [{ personaId: 10 }] })
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [{ id: 10 }] })
+        .mockResolvedValueOnce({ rows: [{ id: 3 }] }) // id del Puesto
         .mockResolvedValueOnce({ rows: [{ id: 20 }] })
         .mockResolvedValueOnce({ rows: [{ id: 5, password: 'old' }] })
+        .mockResolvedValueOnce({ rows: [{ id: 3 }] }) // id del Rol
         .mockResolvedValueOnce({ rows: [{ id: 5 }] })
+        .mockResolvedValueOnce({ rows: [{ nombre: 'RECEPCIONISTA' }] })
         .mockResolvedValueOnce({}); // COMMIT
 
       await service.UpdateEmpleado(10, sinPassword);

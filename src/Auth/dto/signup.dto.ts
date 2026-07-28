@@ -10,25 +10,75 @@ import {
   MaxLength,
 } from 'class-validator';
 
+/** Un nombre propio: letras, espacios, apostrofes y guiones. */
+const SOLO_LETRAS = /^[\p{L}][\p{L}\s'’-]{1,49}$/u;
+
 export class SignupDto {
+  // --- Nombres -------------------------------------------------------------
+  // La base guarda cuatro columnas separadas. El segundo nombre y el segundo
+  // apellido son OPCIONALES: mucha gente no tiene.
+
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(50)
-  @Matches(/^[\p{L}][\p{L}\s'’-]{1,49}$/u, {
-    message: 'El nombre solo puede contener letras, espacios y guiones.',
+  @Matches(SOLO_LETRAS, {
+    message: 'El primer nombre solo puede contener letras, espacios y guiones.',
   })
+  primerNombre?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  @Matches(SOLO_LETRAS, {
+    message: 'El segundo nombre solo puede contener letras, espacios y guiones.',
+  })
+  segundoNombre?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(50)
+  @Matches(SOLO_LETRAS, {
+    message: 'El primer apellido solo puede contener letras, espacios y guiones.',
+  })
+  primerApellido?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  @Matches(SOLO_LETRAS, {
+    message: 'El segundo apellido solo puede contener letras, espacios y guiones.',
+  })
+  segundoApellido?: string;
+
+  /**
+   * Campos viejos, aceptados por compatibilidad.
+   *
+   * El alta con Google los sigue usando porque Google solo entrega givenName
+   * y familyName. Si vienen y no vienen los cuatro nuevos, el servicio los
+   * parte: 'Juan Carlos' -> primerNombre 'Juan', segundoNombre 'Carlos'.
+   */
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(100)
   nombre?: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(2)
-  @MaxLength(50)
-  @Matches(/^[\p{L}][\p{L}\s'’-]{1,49}$/u, {
-    message: 'El apellido solo puede contener letras, espacios y guiones.',
-  })
+  @MaxLength(100)
   apellido?: string;
 
-  @IsOptional() 
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{14}$/, {
+    message: 'El RTN debe tener 14 dígitos.',
+  })
+  rtn?: string;
+
+  @IsOptional()
   @IsString()
   @Matches(/^(?:\d{4}-\d{4}-\d{5}|\d{13})$/, {
     message: 'El DNI debe tener el formato ####-####-##### o 13 dígitos.',

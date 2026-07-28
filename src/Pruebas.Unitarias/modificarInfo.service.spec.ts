@@ -102,9 +102,7 @@ describe('ModificarInfoService', () => {
   // TEST 6: No permite datos vacios
   // --------------------------------------------------------------------
   it('Debe lanzar BadRequestException si no se envian datos validos', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ correo: 'cliente@mail.com', rol: 'CLIENTE', personaId: 5 }],
-    });
+    mockQuery.mockResolvedValueOnce({ rows: [{ userId: 12, personaId: 5 }] });
 
     await expect(
       service.completarDatosPorCorreo('cliente@mail.com', {} as any),
@@ -129,18 +127,17 @@ describe('ModificarInfoService', () => {
   // --------------------------------------------------------------------
   it('Debe actualizar persona sin password', async () => {
     mockQuery
-      .mockResolvedValueOnce({
-        rows: [{ correo: 'cliente@mail.com', rol: 'CLIENTE', personaId: 5 }],
-      }) // buscar usuario
+      .mockResolvedValueOnce({ rows: [{ userId: 12, personaId: 5 }] }) // buscar usuario
       .mockResolvedValueOnce({ rows: [] }); // UPDATE Persona
 
+    // 'Juan Carlos' se parte en primerNombre + segundoNombre
     const result = await service.completarDatosPorCorreo('cliente@mail.com', {
-      nombre: 'Juan',
+      nombre: 'Juan Carlos',
     } as any);
 
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE "Persona"'),
-      ['Juan', 5],
+      ['Juan', 'Carlos', 5],
     );
     expect(bcrypt.hash).not.toHaveBeenCalled();
     expect(result.message).toBe('Datos del cliente completados correctamente.');
@@ -151,21 +148,20 @@ describe('ModificarInfoService', () => {
   // --------------------------------------------------------------------
   it('Debe actualizar persona y password cuando se envia', async () => {
     mockQuery
-      .mockResolvedValueOnce({
-        rows: [{ correo: 'cliente@mail.com', rol: 'CLIENTE', personaId: 5 }],
-      }) // buscar usuario
+      .mockResolvedValueOnce({ rows: [{ userId: 12, personaId: 5 }] }) // buscar usuario
       .mockResolvedValueOnce({ rows: [] }) // UPDATE Persona
       .mockResolvedValueOnce({ rows: [] }); // UPDATE User
 
     const result = await service.completarDatosPorCorreo('cliente@mail.com', {
-      nombre: 'Juan',
+      primerNombre: 'Juan',
       password: '12345',
     } as any);
 
     expect(bcrypt.hash).toHaveBeenCalledWith('12345', 10);
+    // La contrasena se actualiza por id de usuario, no por correo
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE "User"'),
-      ['hash_mock', 'cliente@mail.com'],
+      ['hash_mock', 12],
     );
     expect(result.message).toBe('Datos del cliente completados correctamente.');
   });
@@ -175,9 +171,7 @@ describe('ModificarInfoService', () => {
   // --------------------------------------------------------------------
   it('Debe lanzar BadRequestException si el telefono ya esta en uso', async () => {
     mockQuery
-      .mockResolvedValueOnce({
-        rows: [{ correo: 'cliente@mail.com', rol: 'CLIENTE', personaId: 5 }],
-      }) // buscar usuario
+      .mockResolvedValueOnce({ rows: [{ userId: 12, personaId: 5 }] }) // buscar usuario
       .mockResolvedValueOnce({ rows: [{ id: 99 }] }); // telefono duplicado
 
     await expect(
@@ -192,9 +186,7 @@ describe('ModificarInfoService', () => {
   // --------------------------------------------------------------------
   it('Debe lanzar BadRequestException si el DNI ya esta en uso', async () => {
     mockQuery
-      .mockResolvedValueOnce({
-        rows: [{ correo: 'cliente@mail.com', rol: 'CLIENTE', personaId: 5 }],
-      }) // buscar usuario
+      .mockResolvedValueOnce({ rows: [{ userId: 12, personaId: 5 }] }) // buscar usuario
       .mockResolvedValueOnce({ rows: [{ id: 99 }] }); // dni duplicado
 
     await expect(

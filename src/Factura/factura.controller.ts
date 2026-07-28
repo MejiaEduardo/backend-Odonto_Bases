@@ -16,7 +16,7 @@ import { RolesGuard } from '../Auth/roles.guard';
 import { Roles } from '../Auth/roles.decorator';
 
 import { FacturaService, PeriodoReporte } from './factura.service';
-import { CreateFacturaDto } from './dto/create-factura.dto';
+import { AnularFacturaDto, CreateFacturaDto } from './dto/create-factura.dto';
 
 const CODE_TO_HTTP_STATUS: Record<number, HttpStatus> = {
   4: HttpStatus.NOT_FOUND,
@@ -100,5 +100,23 @@ export class FacturaController {
     const resultado = this.throwIfError(await this.facturaService.emitir(dto));
     // El frontend redirige usando el id, así que devolvemos la factura plana
     return resultado.data ?? resultado;
+  }
+
+  /**
+   * Anular una factura.
+   *
+   * No hay DELETE a proposito: una factura emitida se conserva siempre, con
+   * su correlativo, porque hay que poder rendirla ante el SAR. La base
+   * rechaza el borrado fisico con un trigger.
+   */
+  @Post(':id/anular')
+  @Roles('RECEPCIONISTA', 'ADMIN')
+  @ApiOperation({ summary: 'Anular una factura (se conserva, no se borra)' })
+  @ApiResponse({ status: 409, description: 'La factura ya estaba anulada' })
+  async anular(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AnularFacturaDto,
+  ) {
+    return this.throwIfError(await this.facturaService.anular(id, dto.motivo));
   }
 }

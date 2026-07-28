@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
+// Registra como se convierten NUMERIC y DATE. Ver src/database/tipos-pg.ts.
+import './tipos-pg';
 
 dotenv.config();
 

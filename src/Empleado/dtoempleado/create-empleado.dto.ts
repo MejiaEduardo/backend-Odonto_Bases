@@ -3,21 +3,53 @@ import { IsArray, IsBoolean, IsDate, IsEmail, IsInt, IsNotEmpty, IsNumber, IsOpt
 import { Type } from 'class-transformer';
 
 export class CreateEmpleadoDto {
-  // Datos de la Persona
-  @ApiProperty({ description: 'Nombre de la persona' })
-  @IsString()
-  @IsNotEmpty()
-  nombre: string;
+  // --- Datos de la Persona -------------------------------------------------
+  // La base guarda cuatro columnas de nombre. El segundo nombre y el segundo
+  // apellido son OPCIONALES.
 
-  @ApiProperty({ description: 'Apellido de la persona' })
+  @ApiPropertyOptional({ description: 'Primer nombre de la persona' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  apellido: string;
+  primerNombre?: string;
+
+  @ApiPropertyOptional({ description: 'Segundo nombre (opcional)' })
+  @IsOptional()
+  @IsString()
+  segundoNombre?: string;
+
+  @ApiPropertyOptional({ description: 'Primer apellido de la persona' })
+  @IsOptional()
+  @IsString()
+  primerApellido?: string;
+
+  @ApiPropertyOptional({ description: 'Segundo apellido (opcional)' })
+  @IsOptional()
+  @IsString()
+  segundoApellido?: string;
+
+  /**
+   * Campos viejos. Se aceptan por compatibilidad: si vienen sin los cuatro
+   * nuevos, el servicio los parte ('Juan Carlos' -> 'Juan' + 'Carlos').
+   */
+  @ApiPropertyOptional({ description: 'Nombre completo (formato antiguo)' })
+  @IsOptional()
+  @IsString()
+  nombre?: string;
+
+  @ApiPropertyOptional({ description: 'Apellidos (formato antiguo)' })
+  @IsOptional()
+  @IsString()
+  apellido?: string;
 
   @ApiProperty({ description: 'DNI de la persona' })
   @IsString()
   @IsNotEmpty()
   dni: string;
+
+  @ApiPropertyOptional({ description: 'RTN de la persona (14 dígitos)' })
+  @IsOptional()
+  @IsString()
+  rtn?: string;
 
   @ApiProperty({ description: 'Teléfono de la persona' })
   @IsString()

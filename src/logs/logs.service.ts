@@ -33,9 +33,10 @@ export class LogsService {
 
   async findAll() {
     const result = await this.db.pool.query(
-      `SELECT l.*, p.nombre, p.apellido, e.puesto
+      `SELECT l.*, p."nombreCompleto", pu.nombre AS puesto
        FROM "Logs" l
        JOIN "Empleado" e ON e.id = l."empleadoId"
+       JOIN "Puesto"  pu ON pu.id = e."puestoId"
        JOIN "Persona" p ON p.id = e."personaId"
        ORDER BY l.login DESC`,
     );
@@ -44,9 +45,10 @@ export class LogsService {
 
   async findOne(id: number) {
     const result = await this.db.pool.query(
-      `SELECT l.*, p.nombre, p.apellido, e.puesto
+      `SELECT l.*, p."nombreCompleto", pu.nombre AS puesto
        FROM "Logs" l
        JOIN "Empleado" e ON e.id = l."empleadoId"
+       JOIN "Puesto"  pu ON pu.id = e."puestoId"
        JOIN "Persona" p ON p.id = e."personaId"
        WHERE l.id = $1`,
       [id],
@@ -61,9 +63,10 @@ export class LogsService {
 
   async getLogsByEmpleado(empleadoId: number) {
     const result = await this.db.pool.query(
-      `SELECT l.*, p.nombre, p.apellido, e.puesto
+      `SELECT l.*, p."nombreCompleto", pu.nombre AS puesto
        FROM "Logs" l
        JOIN "Empleado" e ON e.id = l."empleadoId"
+       JOIN "Puesto"  pu ON pu.id = e."puestoId"
        JOIN "Persona" p ON p.id = e."personaId"
        WHERE l."empleadoId" = $1
        ORDER BY l.login DESC`,

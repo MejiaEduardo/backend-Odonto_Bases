@@ -58,11 +58,19 @@ describe('AuthService', () => {
       id: 1,
       correo: 'test@example.com',
       password: 'hashed123',
-      passwordTemporal: null,
-      passwordTemporalExpira: null,
       rol: 'CLIENTE',
+      rolId: 4,
       personaId: 5,
-      persona: { id: 5, nombre: 'Test', apellido: 'User' },
+      persona: {
+        id: 5,
+        primerNombre: 'Test',
+        segundoNombre: null,
+        primerApellido: 'User',
+        segundoApellido: null,
+        nombreCompleto: 'Test User',
+        nombre: 'Test',
+        apellido: 'User',
+      },
     };
 
     it('debería retornar código 11 si el usuario no existe', async () => {
@@ -89,10 +97,12 @@ describe('AuthService', () => {
     });
 
     it('debería retornar token y datos de usuario si todo es correcto', async () => {
-      // 1: buscar usuario, 2: buscar empleado (no es empleado)
+      // 1: buscar usuario, 2: buscar empleado (no es empleado),
+      // 3: buscar si es paciente (tabla "Paciente", migracion 005)
       mockQuery
         .mockResolvedValueOnce({ rows: [mockUser] })
-        .mockResolvedValueOnce({ rows: [] });
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: 9 }] });
       bcryptCompare.mockResolvedValue(true);
 
       const result = await service.validateUser({
@@ -113,9 +123,10 @@ describe('AuthService', () => {
 
     it('debería registrar en Logs si el usuario es empleado', async () => {
       mockQuery
-        .mockResolvedValueOnce({ rows: [mockUser] })
-        .mockResolvedValueOnce({ rows: [{ id: 77 }] })
-        .mockResolvedValueOnce({ rows: [] });
+        .mockResolvedValueOnce({ rows: [mockUser] })   // usuario
+        .mockResolvedValueOnce({ rows: [{ id: 77 }] }) // es empleado
+        .mockResolvedValueOnce({ rows: [] })           // INSERT en Logs
+        .mockResolvedValueOnce({ rows: [] });          // no es paciente
       bcryptCompare.mockResolvedValue(true);
 
       const result = await service.validateUser({
@@ -163,8 +174,10 @@ describe('AuthService', () => {
     const bcryptHash = bcrypt.hash as jest.Mock;
 
     const signupDto = {
-      nombre: 'Juan',
-      apellido: 'Perez',
+      primerNombre: 'Juan',
+      segundoNombre: 'Carlos',
+      primerApellido: 'Perez',
+      segundoApellido: 'Lopez',
       dni: '0801-2000-00001',
       telefono: '99999999',
       direccion: 'Col. Miraflores',
@@ -225,7 +238,8 @@ describe('AuthService', () => {
         .mockResolvedValueOnce({ rows: [] }) // dni libre
         .mockResolvedValueOnce({ rows: [{ id: 10 }] }) // Persona
         .mockResolvedValueOnce({ rows: [{ id: 1, correo: signupDto.correo }] }) // User
-        .mockResolvedValueOnce({ rows: [{ id: 3, pacienteId: 10 }] }) // Expediente
+        .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // Paciente (migracion 005)
+        .mockResolvedValueOnce({ rows: [{ id: 3, pacienteId: 7 }] }) // Expediente
         .mockResolvedValueOnce({}); // COMMIT
       bcryptHash.mockResolvedValue('hashedPass');
 
@@ -258,8 +272,10 @@ describe('AuthService', () => {
       mockClientQuery
         .mockResolvedValueOnce({}) // BEGIN
         .mockResolvedValueOnce({ rows: [] }) // correo libre
+        .mockResolvedValueOnce({ rows: [] }) // dni libre
         .mockResolvedValueOnce({ rows: [{ id: 10 }] }) // Persona
         .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // User
+        .mockResolvedValueOnce({ rows: [{ id: 7 }] }) // Paciente (migracion 005)
         .mockResolvedValueOnce({ rows: [{ id: 3 }] }) // Expediente
         .mockResolvedValueOnce({}); // COMMIT
 
@@ -281,7 +297,8 @@ describe('AuthService', () => {
         .mockResolvedValueOnce({
           rows: [{ id: 1, correo, rol: 'CLIENTE', personaId: 5 }],
         }) // validateUser
-        .mockResolvedValueOnce({ rows: [] }); // no es empleado
+        .mockResolvedValueOnce({ rows: [] })  // no es empleado
+        .mockResolvedValueOnce({ rows: [] }); // no es paciente
 
       const result = await service.validateGoogleUser({ correo } as any);
 
